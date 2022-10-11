@@ -2,12 +2,10 @@ package gormaws
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"regexp"
 
 	gormauth "github.com/Invicton-Labs/gorm-auth"
-	awscerts "github.com/Invicton-Labs/gorm-auth/aws/certs"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/rds/auth"
 	"github.com/go-sql-driver/mysql"
@@ -17,50 +15,6 @@ import (
 var (
 	rdsHostRegionRegexp *regexp.Regexp = regexp.MustCompile(`^[^.]+\.[^.]+\.([a-z]+-[a-z]+-[0-9]+)\.rds\.amazonaws\.com$`)
 )
-
-type GetConfigInput struct {
-	BaseConfig *aws.Config
-	RoleArn    *string
-}
-
-// func GetConfig(ctx context.Context, input GetConfigInput) (cfg aws.Config, err error) {
-// 	if ctx == nil {
-// 		ctx = context.Background()
-// 	}
-
-// 	if baseConfig == nil {
-// 		cfg, err = config.LoadDefaultConfig(ctx)
-// 		if err != nil {
-// 			return aws.Config{}, errors.WithStack(err)
-// 		}
-// 	} else {
-// 		cfg = cfg.Copy()
-// 	}
-
-// 	cfg.ConfigSources
-
-// 	envConf, err := config.NewEnvConfig()
-// 	if err != nil {
-// 		return aws.Config{}, errors.WithStack(err)
-// 	}
-
-// 	if input.RoleArn != nil {
-// 		envConf.RoleARN = *input.RoleArn
-// 	}
-
-// 	aws.NewConfig()
-
-// 	stsClient := sts.NewFromConfig(cfg)
-// 	provider := stscreds.NewAssumeRoleProvider(stsClient, role)
-// 	credsCache := aws.NewCredentialsCache(provider)
-
-// 	roleCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithCredentialsProvider(credsCache))
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
-// 	cfg = roleCfg
-// 	return cfg
-// }
 
 // RdsIamAuth is a struct that contains all of the information necessary
 // for connecting to an AWS RDS cluster with IAM authentication. You
@@ -84,7 +38,7 @@ type RdsIamAuth struct {
 	AwsConfig aws.Config
 }
 
-func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, registerTlsConfig bool, host string, port int, username string) gormauth.GetMysqlConfigCallback {
+func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, host string, port int, username string) gormauth.GetMysqlConfigCallback {
 
 	if host == "" {
 		panic("no host was provided for connecting to the database")
@@ -99,8 +53,8 @@ func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, registerTlsConfi
 	dbRegion := ria.Region
 	if dbRegion == "" {
 		regionMatches := rdsHostRegionRegexp.FindStringSubmatch(host)
-		if len(regionMatches) > 0 {
-			dbRegion = regionMatches[0]
+		if len(regionMatches) > 1 {
+			dbRegion = regionMatches[1]
 		}
 	}
 
@@ -128,27 +82,16 @@ func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, registerTlsConfi
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
 
 		cfg.User = username
 		cfg.Passwd = authenticationToken
 		cfg.Addr = fmt.Sprintf("%s:%d", host, port)
 		cfg.DBName = ria.Database
 
-		if registerTlsConfig {
-			certPool, err := awscerts.GetGlobalRootCertPool(nil)
-			if err != nil {
-				return nil, errors.WithStack(err)
-			}
-			mysql.RegisterTLSConfig(host, &tls.Config{
-				RootCAs:    certPool,
-				ServerName: host,
-			})
-		}
-
-		// TODO: test configurations of AllowCleartextPasswords and AllowNativePasswords
+		// IAM requires clear text authentication
+		cfg.AllowCleartextPasswords = true
+		// IAM requires native password authentication
+		cfg.AllowNativePasswords = true
 
 		return cfg, nil
 	}
@@ -157,8 +100,8 @@ func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, registerTlsConfi
 
 // GetReadOnlyTokenGenerator returns a generator function that generates RDS IAM auth tokens
 // for use in new connections to the main/writer host specified in an RdsIamAuth struct.
-func (ria *RdsIamAuth) GetTokenGenerator(baseCfg *mysql.Config, registerTlsConfig bool) gormauth.GetMysqlConfigCallback {
-	return ria.getTokenGenerator(baseCfg, registerTlsConfig, ria.Host, ria.Port, ria.Username)
+func (ria *RdsIamAuth) GetTokenGenerator(baseCfg *mysql.Config) gormauth.GetMysqlConfigCallback {
+	return ria.getTokenGenerator(baseCfg, ria.Host, ria.Port, ria.Username)
 }
 
 // RdsIamAuthWithReadOnly is an extension of RdsIamAuth that adds fields for
@@ -177,7 +120,7 @@ type RdsIamAuthWithReadOnly struct {
 
 // GetReadOnlyTokenGenerator returns a generator function that generates RDS IAM auth tokens
 // for use in new connections to the read-only host specified in an RdsIamAuthWithReadOnly struct.
-func (ria *RdsIamAuthWithReadOnly) GetReadOnlyTokenGenerator(baseCfg *mysql.Config, registerTlsConfig bool) gormauth.GetMysqlConfigCallback {
+func (ria *RdsIamAuthWithReadOnly) GetReadOnlyTokenGenerator(baseCfg *mysql.Config) gormauth.GetMysqlConfigCallback {
 	port := ria.PortReadOnly
 	if port == 0 {
 		port = ria.Port
@@ -186,5 +129,5 @@ func (ria *RdsIamAuthWithReadOnly) GetReadOnlyTokenGenerator(baseCfg *mysql.Conf
 	if username == "" {
 		username = ria.Username
 	}
-	return ria.getTokenGenerator(baseCfg, registerTlsConfig, ria.HostReadOnly, port, username)
+	return ria.getTokenGenerator(baseCfg, ria.HostReadOnly, port, username)
 }

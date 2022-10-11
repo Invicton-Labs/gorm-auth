@@ -11,9 +11,15 @@ import (
 	"github.com/jackc/pgx/v4/stdlib"
 )
 
-type ShouldReconfigureCallback = func(ctx context.Context) (reconfigure bool, err error)
-type GetPostgresConfigCallback = func(ctx context.Context) (config pgx.ConnConfig, opts []stdlib.OptionOpenDB, err error)
-type GetMysqlConfigCallback = func(ctx context.Context) (*mysql.Config, error)
+// A function signature for a callback function that determines whether the connection
+// configuration should be reconfigured for the next connection.
+type ShouldReconfigureCallback func(ctx context.Context) (reconfigure bool, err error)
+
+// A function signature for a callback function that gets the Postgres connection configuraiton.
+type GetPostgresConfigCallback func(ctx context.Context) (config pgx.ConnConfig, opts []stdlib.OptionOpenDB, err error)
+
+// A function signature for a callback function that gets the MySQL connection configuraiton.
+type GetMysqlConfigCallback func(ctx context.Context) (*mysql.Config, error)
 
 type connector struct {
 	reconfigureLock       sync.Mutex

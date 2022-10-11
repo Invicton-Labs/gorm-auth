@@ -85,7 +85,8 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, error) {
 		// ...several other settings available
 	}
 
-	return gormaws.GetRdsIamMysqlGorm(ctx, gormaws.GetRdsIamMysqlGormInput[gormaws.RdsIamAuthWithReadOnly]{
+	// Create an input for the creation function
+	input := gormaws.GetRdsIamMysqlGormInput[gormaws.RdsIamAuthWithReadOnly]{
 		GetMysqlGormInputBase: gormauth.GetMysqlGormInputBase{
 			GormOptions: []gorm.Option{
 				gormConfig,
@@ -101,5 +102,8 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, error) {
 		},
 		MysqlConfig:  mysqlConfig,
 		AuthSettings: iamAuthSettings,
-	})
+	}
+
+	// Get the GORM DB
+	return gormaws.GetRdsIamMysqlGorm(ctx, input)
 }

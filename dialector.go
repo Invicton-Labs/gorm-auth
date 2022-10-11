@@ -62,17 +62,20 @@ func getBaseDb(input DialectorInput, connector driver.Connector) *sql.DB {
 	return baseDb
 }
 
+// NewDialector creates a new GORM dialector using the given input configurations.
+// It automatically selects between a MySQL or Postgres dialector depending on the
+// input configuration type.
 func NewDialector[InputType dialectorInputType](input InputType) gorm.Dialector {
 	switch in := any(input).(type) {
 	case MysqlDialectorInput:
-		return NewMysqlDialector(in)
+		return newMysqlDialector(in)
 	case PostgresDialectorInput:
-		return NewPostgresDialector(in)
+		return newPostgresDialector(in)
 	}
 	panic("unknown input type")
 }
 
-func NewMysqlDialector(input MysqlDialectorInput) gorm.Dialector {
+func newMysqlDialector(input MysqlDialectorInput) gorm.Dialector {
 	if input.GetMysqlConfigCallback == nil {
 		panic("the `input.GetMysqlConfigCallback` field must not be nil")
 	}
@@ -88,7 +91,7 @@ func NewMysqlDialector(input MysqlDialectorInput) gorm.Dialector {
 	return gormmysql.New(input.GormMysqlConfig)
 }
 
-func NewPostgresDialector(input PostgresDialectorInput) gorm.Dialector {
+func newPostgresDialector(input PostgresDialectorInput) gorm.Dialector {
 	if input.GetPostgresConfigCallback == nil {
 		panic("the `input.GetPostgresConfigCallback` field must not be nil")
 	}

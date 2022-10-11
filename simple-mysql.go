@@ -3,7 +3,9 @@ package gormauth
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pkg/errors"
@@ -12,9 +14,11 @@ import (
 	"gorm.io/plugin/dbresolver"
 )
 
+// A function signature for a callback function that gets the TLS configuration
+// to use for a specific host.
 type GetTlsConfigCallback func(ctx context.Context, host string) (*tls.Config, error)
 
-func wrapConfigWithTls(sourceFunc GetMysqlConfigCallback, getTlsFunc GetTlsConfigCallback) GetMysqlConfigCallback {
+func wrapMysqlConfigWithTls(sourceFunc GetMysqlConfigCallback, getTlsFunc GetTlsConfigCallback) GetMysqlConfigCallback {
 	return func(ctx context.Context) (*mysql.Config, error) {
 		// Get the base config
 		mysqlConfig, err := sourceFunc(ctx)
@@ -32,8 +36,22 @@ func wrapConfigWithTls(sourceFunc GetMysqlConfigCallback, getTlsFunc GetTlsConfi
 			return nil, errors.WithStack(err)
 		}
 
+		if u.Host == "" {
+			u, err = url.Parse(fmt.Sprintf("db://%s", mysqlConfig.Addr))
+			if err != nil {
+				return nil, errors.WithStack(err)
+			}
+			u.Scheme = ""
+		}
+
+		if u.Host == "" {
+			return nil, errors.Errorf("failed to parse host out of MySQL address '%s'", mysqlConfig.Addr)
+		}
+
+		hostWithoutPort := strings.SplitN(u.Host, ":", 2)[0]
+
 		// Get the TLS config
-		tlsConfig, err := getTlsFunc(ctx, u.Host)
+		tlsConfig, err := getTlsFunc(ctx, hostWithoutPort)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
@@ -42,10 +60,6 @@ func wrapConfigWithTls(sourceFunc GetMysqlConfigCallback, getTlsFunc GetTlsConfi
 		if err := mysql.RegisterTLSConfig(u.Host, tlsConfig); err != nil {
 			return nil, errors.WithStack(err)
 		}
-
-		// TODO: test if this works
-		u.Scheme = "tls"
-		mysqlConfig.Addr = u.String()
 
 		// Ensure the MySQL config specifies the right TLS config
 		mysqlConfig.TLSConfig = u.Host
@@ -77,15 +91,13 @@ func GetMysqlGorm(
 	}
 
 	writeDialectorInput := input.WriteDialectorInput.Clone()
-	writeDialectorInput.ShouldReconfigureCallback = nil
 	readDialectorInput := input.ReadDialectorInput.Clone()
-	readDialectorInput.ShouldReconfigureCallback = nil
 
 	// If a TLS function is provided, wrap the config functions
 	if input.GetTlsConfigFunc != nil {
-		input.WriteConfigFunc = wrapConfigWithTls(input.WriteConfigFunc, input.GetTlsConfigFunc)
+		input.WriteConfigFunc = wrapMysqlConfigWithTls(input.WriteConfigFunc, input.GetTlsConfigFunc)
 		if input.ReadConfigFunc != nil {
-			input.ReadConfigFunc = wrapConfigWithTls(input.ReadConfigFunc, input.GetTlsConfigFunc)
+			input.ReadConfigFunc = wrapMysqlConfigWithTls(input.ReadConfigFunc, input.GetTlsConfigFunc)
 		}
 	}
 

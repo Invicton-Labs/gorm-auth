@@ -53,18 +53,24 @@ func GetRdsIamMysqlGorm[AuthType authTypes](
 		readAuthSettings.AwsConfig = defaultAwsConfig
 	}
 
-	writeDialectorInput := input.WriteDialectorInput.Clone()
-	writeDialectorInput.ShouldReconfigureCallback = nil
-	readDialectorInput := input.ReadDialectorInput.Clone()
-	readDialectorInput.ShouldReconfigureCallback = nil
+	// RDS IAM Auth rotates tokens very frequently, so just get a new token
+	// on each new connection.
+	input.WriteDialectorInput.ShouldReconfigureCallback = nil
+	input.ReadDialectorInput.ShouldReconfigureCallback = nil
+
+	// If no TLS config func is provided, use the default AWS TLS
+	// config func.
+	if input.GetTlsConfigFunc == nil {
+		input.GetTlsConfigFunc = GetTlsConfig
+	}
 
 	getRdsInput := gormauth.GetMysqlGormInput{
 		GetMysqlGormInputBase: input.GetMysqlGormInputBase,
-		WriteConfigFunc:       writeAuthSettings.GetTokenGenerator(input.MysqlConfig, true),
+		WriteConfigFunc:       writeAuthSettings.GetTokenGenerator(input.MysqlConfig),
 	}
 
 	if hasReader {
-		getRdsInput.ReadConfigFunc = readAuthSettings.GetReadOnlyTokenGenerator(input.MysqlConfig, true)
+		getRdsInput.ReadConfigFunc = readAuthSettings.GetReadOnlyTokenGenerator(input.MysqlConfig)
 	}
 
 	return gormauth.GetMysqlGorm(ctx, getRdsInput)
