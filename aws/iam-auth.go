@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"regexp"
 
-	gormauth "github.com/Invicton-Labs/gorm-auth"
+	"github.com/Invicton-Labs/gorm-auth/connectors"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/rds/auth"
 	"github.com/go-sql-driver/mysql"
@@ -32,13 +32,15 @@ type RdsIamAuth struct {
 	// The name of the database to connect to
 	Database string `json:"database"`
 	// This is the region that the database is in, not
-	// that we're connecting from
+	// that we're connecting from. If this field is not
+	// provide, the connection function will attempt to
+	// parse the region from the RDS host name.
 	Region string `json:"region"`
 	// The AWS config to use for authentication/credentials
 	AwsConfig aws.Config
 }
 
-func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, host string, port int, username string) gormauth.GetMysqlConfigCallback {
+func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, host string, port int, username string) connectors.GetMysqlConfigCallback {
 
 	if host == "" {
 		panic("no host was provided for connecting to the database")
@@ -100,7 +102,7 @@ func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, host string, por
 
 // GetReadOnlyTokenGenerator returns a generator function that generates RDS IAM auth tokens
 // for use in new connections to the main/writer host specified in an RdsIamAuth struct.
-func (ria *RdsIamAuth) GetTokenGenerator(baseCfg *mysql.Config) gormauth.GetMysqlConfigCallback {
+func (ria *RdsIamAuth) GetTokenGenerator(baseCfg *mysql.Config) connectors.GetMysqlConfigCallback {
 	return ria.getTokenGenerator(baseCfg, ria.Host, ria.Port, ria.Username)
 }
 
@@ -120,7 +122,7 @@ type RdsIamAuthWithReadOnly struct {
 
 // GetReadOnlyTokenGenerator returns a generator function that generates RDS IAM auth tokens
 // for use in new connections to the read-only host specified in an RdsIamAuthWithReadOnly struct.
-func (ria *RdsIamAuthWithReadOnly) GetReadOnlyTokenGenerator(baseCfg *mysql.Config) gormauth.GetMysqlConfigCallback {
+func (ria *RdsIamAuthWithReadOnly) GetReadOnlyTokenGenerator(baseCfg *mysql.Config) connectors.GetMysqlConfigCallback {
 	port := ria.PortReadOnly
 	if port == 0 {
 		port = ria.Port

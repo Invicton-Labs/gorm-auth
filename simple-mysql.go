@@ -7,9 +7,10 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Invicton-Labs/gorm-auth/connectors"
+	"github.com/Invicton-Labs/gorm-auth/dialectors"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pkg/errors"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/plugin/dbresolver"
 )
@@ -18,7 +19,7 @@ import (
 // to use for a specific host.
 type GetTlsConfigCallback func(ctx context.Context, host string) (*tls.Config, error)
 
-func wrapMysqlConfigWithTls(sourceFunc GetMysqlConfigCallback, getTlsFunc GetTlsConfigCallback) GetMysqlConfigCallback {
+func wrapMysqlConfigWithTls(sourceFunc connectors.GetMysqlConfigCallback, getTlsFunc GetTlsConfigCallback) connectors.GetMysqlConfigCallback {
 	return func(ctx context.Context) (*mysql.Config, error) {
 		// Get the base config
 		mysqlConfig, err := sourceFunc(ctx)
@@ -67,59 +68,48 @@ func wrapMysqlConfigWithTls(sourceFunc GetMysqlConfigCallback, getTlsFunc GetTls
 	}
 }
 
-type GetMysqlGormInputBase struct {
-	GormOptions         []gorm.Option
-	GormMysqlConfig     gormmysql.Config
-	WriteDialectorInput DialectorInput
-	ReadDialectorInput  DialectorInput
-	GetTlsConfigFunc    GetTlsConfigCallback
-}
-
+// The input values for getting a standard MySQL GORM DB handle
 type GetMysqlGormInput struct {
-	GetMysqlGormInputBase
-	WriteConfigFunc GetMysqlConfigCallback
-	ReadConfigFunc  GetMysqlConfigCallback
+	// REQUIRED: Input values for the write dialector
+	WriteDialectorInput dialectors.MysqlDialectorInput
+	// OPTIONAL: Input values for the read dialector
+	ReadDialectorInput dialectors.MysqlDialectorInput
+	// OPTIONAL: A set of GORM options to use for the connections
+	GormOptions []gorm.Option
+	// OPTIONAL: A function that gets the TLS config to use for a
+	// connection based on the given host name
+	GetTlsConfigFunc GetTlsConfigCallback
 }
 
+// Gets a GORM DB handle for a MySQL database
 func GetMysqlGorm(
 	ctx context.Context,
 	input GetMysqlGormInput,
 ) (*gorm.DB, error) {
 
-	if input.WriteConfigFunc == nil {
-		panic("the `input.WriterConfigFunc` value must not be nil")
+	if input.WriteDialectorInput.GetMysqlConfigCallback == nil {
+		panic("the `input.WriteDialectorInput.GetMysqlConfigCallback` value must not be nil")
 	}
-
-	writeDialectorInput := input.WriteDialectorInput.Clone()
-	readDialectorInput := input.ReadDialectorInput.Clone()
 
 	// If a TLS function is provided, wrap the config functions
 	if input.GetTlsConfigFunc != nil {
-		input.WriteConfigFunc = wrapMysqlConfigWithTls(input.WriteConfigFunc, input.GetTlsConfigFunc)
-		if input.ReadConfigFunc != nil {
-			input.ReadConfigFunc = wrapMysqlConfigWithTls(input.ReadConfigFunc, input.GetTlsConfigFunc)
+		input.WriteDialectorInput.GetMysqlConfigCallback = wrapMysqlConfigWithTls(input.WriteDialectorInput.GetMysqlConfigCallback, input.GetTlsConfigFunc)
+		if input.ReadDialectorInput.GetMysqlConfigCallback != nil {
+			input.ReadDialectorInput.GetMysqlConfigCallback = wrapMysqlConfigWithTls(input.ReadDialectorInput.GetMysqlConfigCallback, input.GetTlsConfigFunc)
 		}
 	}
 
 	// Create the writer dialector
-	writerDialector := NewDialector(MysqlDialectorInput{
-		DialectorInput:         writeDialectorInput,
-		GormMysqlConfig:        input.GormMysqlConfig,
-		GetMysqlConfigCallback: input.WriteConfigFunc,
-	})
+	writerDialector := dialectors.NewDialector(input.WriteDialectorInput)
 
 	db, err := gorm.Open(writerDialector, input.GormOptions...)
 	if err != nil {
 		return nil, err
 	}
 
-	if input.ReadConfigFunc != nil {
+	if input.ReadDialectorInput.GetMysqlConfigCallback != nil {
 		// Create the reader dialector
-		readDialector := NewDialector(MysqlDialectorInput{
-			DialectorInput:         readDialectorInput,
-			GormMysqlConfig:        input.GormMysqlConfig,
-			GetMysqlConfigCallback: input.ReadConfigFunc,
-		})
+		readDialector := dialectors.NewDialector(input.ReadDialectorInput)
 
 		// Register the reader dialector, if there is one
 		if err := db.Use(dbresolver.Register(dbresolver.Config{

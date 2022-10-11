@@ -8,6 +8,7 @@ import (
 
 	gormauth "github.com/Invicton-Labs/gorm-auth"
 	gormaws "github.com/Invicton-Labs/gorm-auth/aws"
+	"github.com/Invicton-Labs/gorm-auth/dialectors"
 	gormmysql "gorm.io/driver/mysql"
 
 	"github.com/go-sql-driver/mysql"
@@ -138,36 +139,52 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, error) {
 	// The maximum number of connections we can have open to the
 	// write host.
 	writeMaxOpenConnections := 3
-	writeDialectorInput := gormauth.DialectorInput{
-		ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
-		// Some general GORM settings for the connection management
-		MaxOpenConns: &writeMaxOpenConnections,
-		// ...several other settings available
+	writeDialectorInput := dialectors.MysqlDialectorInput{
+		DialectorInput: dialectors.DialectorInput{
+			// Set the function that checks if new credentials should be loaded
+			ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
+
+			// Some general GORM settings for the connection management
+			MaxOpenConns: &writeMaxOpenConnections,
+			// ...several other settings available
+		},
+
+		// Set the GORM-specific MySQL settings to use for this dialector
+		GormMysqlConfig: gormMysqlConfig,
+
+		// Set the function that dynamically gets the config for connecting
+		// to the write host.
+		GetMysqlConfigCallback: createMysqlConfigWrite,
 	}
 
 	// The maximum number of connections we can have open to the
 	// read host.
 	readMaxOpenConnections := 3
-	readDialectorInput := gormauth.DialectorInput{
-		ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
-		// Some general GORM settings for the connection management
-		MaxOpenConns: &readMaxOpenConnections,
-		// ...several other settings available
+	readDialectorInput := dialectors.MysqlDialectorInput{
+		DialectorInput: dialectors.DialectorInput{
+			// Set the function that checks if new credentials should be loaded
+			ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
+
+			// Some general GORM settings for the connection management
+			MaxOpenConns: &readMaxOpenConnections,
+			// ...several other settings available
+		},
+		// Set the GORM-specific MySQL settings to use for this dialector
+		GormMysqlConfig: gormMysqlConfig,
+
+		// Set the function that dynamically gets the config for connecting
+		// to the read host.
+		GetMysqlConfigCallback: createMysqlConfigRead,
 	}
 
 	return gormauth.GetMysqlGorm(ctx, gormauth.GetMysqlGormInput{
-		GetMysqlGormInputBase: gormauth.GetMysqlGormInputBase{
-			GormOptions: []gorm.Option{
-				gormConfig,
-			},
-			GormMysqlConfig:     gormMysqlConfig,
-			WriteDialectorInput: writeDialectorInput,
-			ReadDialectorInput:  readDialectorInput,
-			// In this example, our database host is AWS, so we use the
-			// helper function that gets the AWS TLS config for us
-			GetTlsConfigFunc: gormaws.GetTlsConfig,
+		GormOptions: []gorm.Option{
+			gormConfig,
 		},
-		WriteConfigFunc: createMysqlConfigWrite,
-		ReadConfigFunc:  createMysqlConfigRead,
+		WriteDialectorInput: writeDialectorInput,
+		ReadDialectorInput:  readDialectorInput,
+		// In this example, our database host is AWS, so we use the
+		// helper function that gets the AWS TLS config for us
+		GetTlsConfigFunc: gormaws.GetTlsConfig,
 	})
 }

@@ -18,7 +18,7 @@ type authTypes interface {
 // needed for a standard connection to an AWS RDS cluster with
 // IAM authentication enabled.
 type GetRdsIamMysqlGormInput[AuthType authTypes] struct {
-	gormauth.GetMysqlGormInputBase
+	gormauth.GetMysqlGormInput
 	MysqlConfig  *mysql.Config
 	AuthSettings AuthType
 }
@@ -64,14 +64,11 @@ func GetRdsIamMysqlGorm[AuthType authTypes](
 		input.GetTlsConfigFunc = GetTlsConfig
 	}
 
-	getRdsInput := gormauth.GetMysqlGormInput{
-		GetMysqlGormInputBase: input.GetMysqlGormInputBase,
-		WriteConfigFunc:       writeAuthSettings.GetTokenGenerator(input.MysqlConfig),
-	}
+	input.WriteDialectorInput.GetMysqlConfigCallback = writeAuthSettings.GetTokenGenerator(input.MysqlConfig)
 
 	if hasReader {
-		getRdsInput.ReadConfigFunc = readAuthSettings.GetReadOnlyTokenGenerator(input.MysqlConfig)
+		input.ReadDialectorInput.GetMysqlConfigCallback = readAuthSettings.GetReadOnlyTokenGenerator(input.MysqlConfig)
 	}
 
-	return gormauth.GetMysqlGorm(ctx, getRdsInput)
+	return gormauth.GetMysqlGorm(ctx, input.GetMysqlGormInput)
 }

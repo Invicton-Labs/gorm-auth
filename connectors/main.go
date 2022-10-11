@@ -1,4 +1,4 @@
-package gormauth
+package connectors
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/go-sql-driver/mysql"
+
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/stdlib"
 )
@@ -28,31 +29,6 @@ type connector struct {
 	getConnector          func(ctx context.Context) (driver.Connector, error)
 }
 
-func newMysqlConnector(getConfigFunc GetMysqlConfigCallback, shouldReconfigureCallback ShouldReconfigureCallback) driver.Connector {
-	return &connector{
-		shouldReconfigureFunc: shouldReconfigureCallback,
-		getConnector: func(ctx context.Context) (driver.Connector, error) {
-			cfg, err := getConfigFunc(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return mysql.NewConnector(cfg)
-		},
-	}
-}
-
-func newPostgresConnector(getConfigFunc GetPostgresConfigCallback, shouldReconfigureCallback ShouldReconfigureCallback) driver.Connector {
-	return &connector{
-		shouldReconfigureFunc: shouldReconfigureCallback,
-		getConnector: func(ctx context.Context) (driver.Connector, error) {
-			cfg, opts, err := getConfigFunc(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return stdlib.GetConnector(cfg, opts...), nil
-		},
-	}
-}
 func (c *connector) Driver() driver.Driver {
 	return c
 }
