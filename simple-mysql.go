@@ -7,24 +7,24 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Invicton-Labs/go-stackerr"
 	"github.com/Invicton-Labs/gorm-auth/connectors"
 	"github.com/Invicton-Labs/gorm-auth/dialectors"
 	"github.com/go-sql-driver/mysql"
-	"github.com/pkg/errors"
 	"gorm.io/gorm"
 	"gorm.io/plugin/dbresolver"
 )
 
 // A function signature for a callback function that gets the TLS configuration
 // to use for a specific host.
-type GetTlsConfigCallback func(ctx context.Context, host string) (*tls.Config, error)
+type GetTlsConfigCallback func(ctx context.Context, host string) (*tls.Config, stackerr.Error)
 
 func wrapMysqlConfigWithTls(sourceFunc connectors.GetMysqlConfigCallback, getTlsFunc GetTlsConfigCallback) connectors.GetMysqlConfigCallback {
-	return func(ctx context.Context) (*mysql.Config, error) {
+	return func(ctx context.Context) (*mysql.Config, stackerr.Error) {
 		// Get the base config
 		mysqlConfig, err := sourceFunc(ctx)
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, err
 		}
 
 		// Make a copy of it so we don't mess with any values
@@ -32,21 +32,22 @@ func wrapMysqlConfigWithTls(sourceFunc connectors.GetMysqlConfigCallback, getTls
 		mysqlConfig = mysqlConfig.Clone()
 
 		// Parse the address
-		u, err := url.Parse(mysqlConfig.Addr)
-		if err != nil {
-			return nil, errors.WithStack(err)
+		u, cerr := url.Parse(mysqlConfig.Addr)
+		if cerr != nil {
+			return nil, stackerr.Wrap(cerr)
 		}
 
 		if u.Host == "" {
+			var err error
 			u, err = url.Parse(fmt.Sprintf("db://%s", mysqlConfig.Addr))
 			if err != nil {
-				return nil, errors.WithStack(err)
+				return nil, stackerr.Wrap(err)
 			}
 			u.Scheme = ""
 		}
 
 		if u.Host == "" {
-			return nil, errors.Errorf("failed to parse host out of MySQL address '%s'", mysqlConfig.Addr)
+			return nil, stackerr.Errorf("failed to parse host out of MySQL address '%s'", mysqlConfig.Addr)
 		}
 
 		hostWithoutPort := strings.SplitN(u.Host, ":", 2)[0]
@@ -54,12 +55,12 @@ func wrapMysqlConfigWithTls(sourceFunc connectors.GetMysqlConfigCallback, getTls
 		// Get the TLS config
 		tlsConfig, err := getTlsFunc(ctx, hostWithoutPort)
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, err
 		}
 
 		// Register the TLS config for this host
 		if err := mysql.RegisterTLSConfig(u.Host, tlsConfig); err != nil {
-			return nil, errors.WithStack(err)
+			return nil, stackerr.Wrap(err)
 		}
 
 		// Ensure the MySQL config specifies the right TLS config
@@ -85,7 +86,7 @@ type GetMysqlGormInput struct {
 func GetMysqlGorm(
 	ctx context.Context,
 	input GetMysqlGormInput,
-) (*gorm.DB, error) {
+) (*gorm.DB, stackerr.Error) {
 
 	if input.WriteDialectorInput.GetMysqlConfigCallback == nil {
 		panic("the `input.WriteDialectorInput.GetMysqlConfigCallback` value must not be nil")
@@ -104,7 +105,7 @@ func GetMysqlGorm(
 
 	db, err := gorm.Open(writerDialector, input.GormOptions...)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.Wrap(err)
 	}
 
 	if input.ReadDialectorInput.GetMysqlConfigCallback != nil {
@@ -120,7 +121,7 @@ func GetMysqlGorm(
 			// one writer dialector and one reader dialector.
 			Policy: dbresolver.RandomPolicy{},
 		})); err != nil {
-			return nil, err
+			return nil, stackerr.Wrap(err)
 		}
 	}
 

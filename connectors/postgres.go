@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 
+	"github.com/Invicton-Labs/go-stackerr"
 	"github.com/jackc/pgx/v4/stdlib"
 )
 
@@ -11,7 +12,7 @@ import (
 func NewPostgresConnector(getConfigFunc GetPostgresConfigCallback, shouldReconfigureCallback ShouldReconfigureCallback) driver.Connector {
 	return &connector{
 		shouldReconfigureFunc: shouldReconfigureCallback,
-		getConnector: func(ctx context.Context) (driver.Connector, error) {
+		getConnector: func(ctx context.Context) (driver.Connector, stackerr.Error) {
 			cfg, opts, err := getConfigFunc(ctx)
 			if err != nil {
 				return nil, err

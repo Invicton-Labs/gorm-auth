@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Invicton-Labs/go-stackerr"
 	gormauth "github.com/Invicton-Labs/gorm-auth"
 	gormaws "github.com/Invicton-Labs/gorm-auth/aws"
 	"github.com/Invicton-Labs/gorm-auth/dialectors"
@@ -25,7 +26,7 @@ type MysqlSecret struct {
 }
 
 // A function for determining whether we need to reload credentials
-func checkIfNewCredentialsNeeded(ctx context.Context) (bool, error) {
+func checkIfNewCredentialsNeeded(ctx context.Context) (bool, stackerr.Error) {
 	// In here, you'd determine whether we need to fetch new credentials
 	// for the next database connection. Generally, this would be some
 	// sort of mechanism for determining whether credentials have
@@ -37,7 +38,7 @@ func checkIfNewCredentialsNeeded(ctx context.Context) (bool, error) {
 }
 
 // A function for getting the connection secret
-func getSecret(ctx context.Context) (secret MysqlSecret, err error) {
+func getSecret(ctx context.Context) (secret MysqlSecret, err stackerr.Error) {
 	// For this example, we're loading the secret from a static value,
 	// but in real usage you'd be loading it from some external vault
 	// (e.g. AWS Secrets Manager, AWS SSM Parameter Store, etc.).
@@ -55,7 +56,7 @@ func getSecret(ctx context.Context) (secret MysqlSecret, err error) {
 
 	// Unmarshal the JSON into a struct
 	if err := json.Unmarshal([]byte(secretJson), &secret); err != nil {
-		return secret, err
+		return secret, stackerr.Wrap(err)
 	}
 
 	return secret, nil
@@ -63,7 +64,7 @@ func getSecret(ctx context.Context) (secret MysqlSecret, err error) {
 
 // This is an example function that shows how you might get the base
 // MySQL configuration, before any authentication is added
-func getBaseConfig() (*mysql.Config, error) {
+func getBaseConfig() (*mysql.Config, stackerr.Error) {
 	cfg := mysql.NewConfig()
 	cfg.Loc = time.UTC
 	cfg.Collation = "utf8mb4_0900_ai_ci"
@@ -72,7 +73,7 @@ func getBaseConfig() (*mysql.Config, error) {
 
 // A function for dynamically creating a MySQL config for connections
 // to the writer instance.
-func createMysqlConfigWrite(ctx context.Context) (*mysql.Config, error) {
+func createMysqlConfigWrite(ctx context.Context) (*mysql.Config, stackerr.Error) {
 	// Load the secret
 	secret, err := getSecret(ctx)
 	if err != nil {
@@ -98,7 +99,7 @@ func createMysqlConfigWrite(ctx context.Context) (*mysql.Config, error) {
 
 // A function for dynamically creating a MySQL config for connections
 // to the writer instance.
-func createMysqlConfigRead(ctx context.Context) (*mysql.Config, error) {
+func createMysqlConfigRead(ctx context.Context) (*mysql.Config, stackerr.Error) {
 	// Load the secret
 	secret, err := getSecret(ctx)
 	if err != nil {
@@ -122,7 +123,7 @@ func createMysqlConfigRead(ctx context.Context) (*mysql.Config, error) {
 	return config, nil
 }
 
-func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, error) {
+func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 
 	gormConfig := &gorm.Config{
 		// Insert GORM general settings here

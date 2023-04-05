@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/Invicton-Labs/go-stackerr"
 	gormauth "github.com/Invicton-Labs/gorm-auth"
 	gormaws "github.com/Invicton-Labs/gorm-auth/aws"
 	"github.com/Invicton-Labs/gorm-auth/dialectors"
@@ -30,19 +31,19 @@ const (
 `
 )
 
-func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, error) {
+func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 
 	// Unmarshal the JSON into a struct that can be used for
 	// generating tokens.
 	var iamAuthSettings gormaws.RdsIamAuthWithReadOnly
 	if err := json.Unmarshal([]byte(AwsRdsIamAuthJson), &iamAuthSettings); err != nil {
-		return nil, err
+		return nil, stackerr.Wrap(err)
 	}
 
 	// Load the default AWS config from the environment variables.
 	awsCfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.Wrap(err)
 	}
 	iamAuthSettings.AwsConfig = awsCfg
 

@@ -3,10 +3,10 @@ package gormaws
 import (
 	"context"
 
+	"github.com/Invicton-Labs/go-stackerr"
 	gormauth "github.com/Invicton-Labs/gorm-auth"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/go-sql-driver/mysql"
-	"github.com/pkg/errors"
 	"gorm.io/gorm"
 )
 
@@ -29,7 +29,7 @@ type GetRdsIamMysqlGormInput[AuthType authTypes] struct {
 func GetRdsIamMysqlGorm[AuthType authTypes](
 	ctx context.Context,
 	input GetRdsIamMysqlGormInput[AuthType],
-) (*gorm.DB, error) {
+) (*gorm.DB, stackerr.Error) {
 
 	var writeAuthSettings RdsIamAuth
 	var readAuthSettings RdsIamAuthWithReadOnly
@@ -47,7 +47,7 @@ func GetRdsIamMysqlGorm[AuthType authTypes](
 	if writeAuthSettings.AwsConfig.Credentials == nil && writeAuthSettings.AwsConfig.Region == "" {
 		defaultAwsConfig, err := config.LoadDefaultConfig(ctx)
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, stackerr.Wrap(err)
 		}
 		writeAuthSettings.AwsConfig = defaultAwsConfig
 		readAuthSettings.AwsConfig = defaultAwsConfig

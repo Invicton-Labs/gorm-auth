@@ -4,13 +4,12 @@ import (
 	"crypto/x509"
 	"embed"
 	"encoding/pem"
-	"fmt"
 	"io"
 	"net/http"
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/Invicton-Labs/go-stackerr"
 )
 
 //go:embed bundles/*
@@ -31,17 +30,17 @@ var (
 // If any of the certificates in the included bundle have expired, or will expire
 // soon, it will attempt to load new certificates from AWS directly via HTTP.
 // It caches the CertPool for future use.
-func GetGlobalRootCertPool(httpClient *http.Client) (*x509.CertPool, error) {
+func GetGlobalRootCertPool(httpClient *http.Client) (*x509.CertPool, stackerr.Error) {
 	globalAwsRootCertPoolLock.Lock()
 	defer globalAwsRootCertPoolLock.Unlock()
 	if globalAwsRootCertPool == nil {
 		pemBytes, err := awsCertBundles.ReadFile("bundles/global.pem")
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, stackerr.Wrap(err)
 		}
 		rootCertPool := x509.NewCertPool()
 		if ok := rootCertPool.AppendCertsFromPEM(pemBytes); !ok {
-			return nil, errors.WithStack(fmt.Errorf("failed to parse global root CA file"))
+			return nil, stackerr.Errorf("failed to parse global root CA file")
 		}
 
 		hasExpired := false
@@ -51,7 +50,7 @@ func GetGlobalRootCertPool(httpClient *http.Client) (*x509.CertPool, error) {
 			block, pemBytes = pem.Decode(pemBytes)
 			crt, err := x509.ParseCertificate(block.Bytes)
 			if err != nil {
-				return nil, errors.WithStack(err)
+				return nil, stackerr.Wrap(err)
 			}
 			if time.Until(crt.NotAfter) < time.Hour {
 				hasExpired = true
@@ -69,17 +68,17 @@ func GetGlobalRootCertPool(httpClient *http.Client) (*x509.CertPool, error) {
 		}
 		resp, err := httpClient.Get(awsRootCertBundleUrl)
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, stackerr.Wrap(err)
 		}
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, stackerr.Wrap(err)
 		}
 
 		rootCertPool = x509.NewCertPool()
 		if ok := rootCertPool.AppendCertsFromPEM(body); !ok {
-			return nil, errors.WithStack(err)
+			return nil, stackerr.Wrap(err)
 		}
 		globalAwsRootCertPool = rootCertPool
 	}
