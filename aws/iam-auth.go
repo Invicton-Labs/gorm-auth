@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/Invicton-Labs/go-stackerr"
 	"github.com/Invicton-Labs/gorm-auth/connectors"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/rds/auth"
 	"github.com/go-sql-driver/mysql"
-	"github.com/pkg/errors"
 )
 
 var (
@@ -73,7 +73,7 @@ func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, host string, por
 
 	credentials := ria.AwsConfig.Credentials
 
-	return func(ctx context.Context) (*mysql.Config, error) {
+	return func(ctx context.Context) (*mysql.Config, stackerr.Error) {
 		authenticationToken, err := auth.BuildAuthToken(
 			ctx,
 			fmt.Sprintf("%s:%d", host, port),
@@ -82,7 +82,7 @@ func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, host string, por
 			credentials,
 		)
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, stackerr.Wrap(err)
 		}
 
 		cfg.User = username
@@ -97,7 +97,6 @@ func (ria *RdsIamAuth) getTokenGenerator(baseCfg *mysql.Config, host string, por
 
 		return cfg, nil
 	}
-
 }
 
 // GetReadOnlyTokenGenerator returns a generator function that generates RDS IAM auth tokens

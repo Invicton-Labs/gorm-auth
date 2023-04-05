@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 
+	"github.com/Invicton-Labs/go-stackerr"
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -11,12 +12,13 @@ import (
 func NewMysqlConnector(getConfigFunc GetMysqlConfigCallback, shouldReconfigureCallback ShouldReconfigureCallback) driver.Connector {
 	return &connector{
 		shouldReconfigureFunc: shouldReconfigureCallback,
-		getConnector: func(ctx context.Context) (driver.Connector, error) {
+		getConnector: func(ctx context.Context) (driver.Connector, stackerr.Error) {
 			cfg, err := getConfigFunc(ctx)
 			if err != nil {
 				return nil, err
 			}
-			return mysql.NewConnector(cfg)
+			conn, cerr := mysql.NewConnector(cfg)
+			return conn, stackerr.Wrap(cerr)
 		},
 	}
 }
