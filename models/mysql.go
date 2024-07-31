@@ -6,7 +6,7 @@ import (
 	"github.com/Invicton-Labs/go-stackerr"
 )
 
-type MysqlSecret struct {
+type MysqlConnectionParameters struct {
 	// The host of the primary cluster
 	Host string `json:"host"`
 	// The port to connect to the primary cluster
@@ -22,8 +22,8 @@ type DatabaseCredentials struct {
 	Password string `json:"password"`
 }
 
-type MysqlSecretPassword struct {
-	MysqlSecret
+type MysqlConnectionParametersPassword struct {
+	MysqlConnectionParameters
 	// A function for dynamically retrieving the username/password
 	GetCredentials func(ctx context.Context) (DatabaseCredentials, stackerr.Error)
 }
@@ -31,7 +31,7 @@ type MysqlSecretPassword struct {
 // MysqlSecretPasswordWithReadOnly is an extension of MysqlSecretPassword
 // that adds fields for separate read-only connections.
 type MysqlSecretPasswordWithReadOnly struct {
-	MysqlSecretPassword
+	MysqlConnectionParametersPassword
 	// The host for the read-only connection (required).
 	// If not provided, the write host will be used for
 	// read-only connections.

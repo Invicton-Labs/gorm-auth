@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/Invicton-Labs/go-stackerr"
-	gormauth "github.com/Invicton-Labs/gorm-auth"
-	gormaws "github.com/Invicton-Labs/gorm-auth/aws"
+	"github.com/Invicton-Labs/gorm-auth/authenticators"
+	gormauthaws "github.com/Invicton-Labs/gorm-auth/aws"
 	"github.com/Invicton-Labs/gorm-auth/dialectors"
-	gormauthmodels "github.com/Invicton-Labs/gorm-auth/models"
 	gormauthmysql "github.com/Invicton-Labs/gorm-auth/mysql"
 	gormmysql "gorm.io/driver/mysql"
+	"gorm.io/plugin/dbresolver"
 
 	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
@@ -39,7 +39,7 @@ func checkIfNewCredentialsNeeded(ctx context.Context) (bool, stackerr.Error) {
 }
 
 // A function for getting the connection secret
-func getSecret(ctx context.Context) (secret MysqlSecret, err stackerr.Error) {
+func getSecret(_ context.Context) (secret MysqlSecret, err stackerr.Error) {
 	// For this example, we're loading the secret from a static value,
 	// but in real usage you'd be loading it from some external vault
 	// (e.g. AWS Secrets Manager, AWS SSM Parameter Store, etc.).
@@ -63,7 +63,7 @@ func getSecret(ctx context.Context) (secret MysqlSecret, err stackerr.Error) {
 	return secret, nil
 }
 
-func getCredentials(ctx context.Context) (credentials gormauthmodels.DatabaseCredentials, err stackerr.Error) {
+func getCredentials(ctx context.Context) (credentials authenticators.DatabaseCredentials, err stackerr.Error) {
 	// Load the secret
 	secret, err := getSecret(ctx)
 	if err != nil {
@@ -104,79 +104,85 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 		return nil, err
 	}
 
+	// Create a password-based authentication object
+	authenticator := &authenticators.MysqlConnectionParametersPassword{
+		Host:           secret.Host,
+		Port:           secret.Port,
+		Schema:         secret.Database,
+		GetCredentials: getCredentials,
+	}
+
 	// The maximum number of connections we can have open to the
 	// write host.
 	writeMaxOpenConnections := 3
-	writeDialectorInput := dialectors.MysqlDialectorInput{
-		DialectorInput: dialectors.DialectorInput{
-			// Set the function that checks if new credentials should be loaded
-			ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
+	writeInput := gormauthmysql.ConnectionParameters{
+		DialectorInput: dialectors.MysqlDialectorInput{
+			DialectorInput: dialectors.DialectorInput{
+				// Set the function that checks if new credentials should be loaded
+				ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
 
-			// Some general GORM settings for the connection management
-			MaxOpenConns: &writeMaxOpenConnections,
-			// ...several other settings available
+				// Some general GORM settings for the connection management
+				MaxOpenConns: &writeMaxOpenConnections,
+				// ...several other settings available
+			},
+
+			// Set the GORM-specific MySQL settings to use for this dialector
+			GormMysqlConfig: gormMysqlConfig,
+
+			// Set a function that returns the MySQL config to use. This
+			// allows changing parameters for each new connection, if desired.
+			// The host/port/user/password fields don't need to be provided
+			// because they are overwritten by the password authentication system.
+			GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
+				return mysqlConfig, nil
+			},
 		},
-
-		// Set the GORM-specific MySQL settings to use for this dialector
-		GormMysqlConfig: gormMysqlConfig,
-
-		// Set a function that returns the MySQL config to use. This
-		// allows changing parameters for each new connection, if desired.
-		// The host/port/user/password fields don't need to be provided
-		// because they are overwritten by the password authentication system.
-		GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
-			return mysqlConfig, nil
-		},
+		// Use the AWS TLS configuration (change if you're connecting elsewhere)
+		GetTlsConfigFunc: gormauthaws.GetTlsConfig,
+		AuthSettings:     authenticator,
 	}
 
 	// The maximum number of connections we can have open to the
 	// read host.
 	readMaxOpenConnections := 3
-	readDialectorInput := dialectors.MysqlDialectorInput{
-		DialectorInput: dialectors.DialectorInput{
-			// Set the function that checks if new credentials should be loaded
-			ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
+	readInputs := []*gormauthmysql.ConnectionParameters{
+		{
+			DialectorInput: dialectors.MysqlDialectorInput{
+				DialectorInput: dialectors.DialectorInput{
+					// Set the function that checks if new credentials should be loaded
+					ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
 
-			// Some general GORM settings for the connection management
-			MaxOpenConns: &readMaxOpenConnections,
-			// ...several other settings available
-		},
-		// Set the GORM-specific MySQL settings to use for this dialector
-		GormMysqlConfig: gormMysqlConfig,
+					// Some general GORM settings for the connection management
+					MaxOpenConns: &readMaxOpenConnections,
+					// ...several other settings available
+				},
+				// Set the GORM-specific MySQL settings to use for this dialector
+				GormMysqlConfig: gormMysqlConfig,
 
-		// Set a function that returns the MySQL config to use. This
-		// allows changing parameters for each new connection, if desired.
-		// The host/port/user/password fields don't need to be provided
-		// because they are overwritten by the password authentication system.
-		GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
-			return mysqlConfig, nil
+				// Set a function that returns the MySQL config to use. This
+				// allows changing parameters for each new connection, if desired.
+				// The host/port/user/password fields don't need to be provided
+				// because they are overwritten by the password authentication system.
+				GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
+					return mysqlConfig, nil
+				},
+			},
+			// Use the AWS TLS configuration (change if you're connecting elsewhere)
+			GetTlsConfigFunc: gormauthaws.GetTlsConfig,
+			// For this demo, use the same authenticator for both write and read
+			AuthSettings: authenticator,
 		},
 	}
 
-	return gormauth.GetMysqlGorm(ctx, gormauthmysql.GetMysqlGormInputWithAuth[gormauthmodels.MysqlSecretPasswordWithReadOnly]{
-		GetMysqlGormInput: gormauthmysql.GetMysqlGormInput{
-			GormOptions: []gorm.Option{
-				gormConfig,
-			},
-			WriteDialectorInput: writeDialectorInput,
-			ReadDialectorInput:  readDialectorInput,
-			// In this example, our database host is AWS, so we use the
-			// helper function that gets the AWS TLS config for us
-			GetTlsConfigFunc: gormaws.GetTlsConfig,
+	return gormauthmysql.GetMysqlGorm(ctx, gormauthmysql.GetMysqlGormInput{
+		WriteConnectionParameters: &writeInput,
+		ReadConnectionParameters:  readInputs,
+		GormOptions: []gorm.Option{
+			gormConfig,
 		},
-		AuthSettings: gormauthmodels.MysqlSecretPasswordWithReadOnly{
-			MysqlSecretPassword: gormauthmodels.MysqlSecretPassword{
-				MysqlSecret: gormauthmodels.MysqlSecret{
-					Host:   secret.Host,
-					Port:   secret.Port,
-					Schema: secret.Database,
-				},
-				GetCredentials: getCredentials,
-			},
-			HostReadOnly: secret.HostReadOnly,
-			// If your credentials are different for the read-only endpoint,
-			// use a different function here.
-			GetCredentialsReadOnly: getCredentials,
-		},
+		// The policy to use to select which read replica to connect to.
+		// In this example, it doesn't do anything since there only is
+		// one read replica.
+		ReplicaPolicy: dbresolver.StrictRoundRobinPolicy(),
 	})
 }
