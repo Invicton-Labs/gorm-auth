@@ -3,13 +3,14 @@ package examples
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/Invicton-Labs/go-stackerr"
 	gormauth "github.com/Invicton-Labs/gorm-auth"
 	gormaws "github.com/Invicton-Labs/gorm-auth/aws"
 	"github.com/Invicton-Labs/gorm-auth/dialectors"
+	gormauthmodels "github.com/Invicton-Labs/gorm-auth/models"
+	gormauthmysql "github.com/Invicton-Labs/gorm-auth/mysql"
 	gormmysql "gorm.io/driver/mysql"
 
 	"github.com/go-sql-driver/mysql"
@@ -62,65 +63,15 @@ func getSecret(ctx context.Context) (secret MysqlSecret, err stackerr.Error) {
 	return secret, nil
 }
 
-// This is an example function that shows how you might get the base
-// MySQL configuration, before any authentication is added
-func getBaseConfig() (*mysql.Config, stackerr.Error) {
-	cfg := mysql.NewConfig()
-	cfg.Loc = time.UTC
-	cfg.Collation = "utf8mb4_0900_ai_ci"
-	return cfg, nil
-}
-
-// A function for dynamically creating a MySQL config for connections
-// to the writer instance.
-func createMysqlConfigWrite(ctx context.Context) (*mysql.Config, stackerr.Error) {
+func getCredentials(ctx context.Context) (credentials gormauthmodels.DatabaseCredentials, err stackerr.Error) {
 	// Load the secret
 	secret, err := getSecret(ctx)
 	if err != nil {
-		return nil, err
+		return credentials, err
 	}
-
-	// Start with a default MySQL config
-	config, err := getBaseConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	// Set the fields needed for authentication. Note that we're
-	// using the `Host` field of the secret, which represents the
-	// writer/master cluster host.
-	config.Addr = fmt.Sprintf("%s:%d", secret.Host, secret.Port)
-	config.DBName = secret.Database
-	config.User = secret.Username
-	config.Passwd = secret.Password
-
-	return config, nil
-}
-
-// A function for dynamically creating a MySQL config for connections
-// to the writer instance.
-func createMysqlConfigRead(ctx context.Context) (*mysql.Config, stackerr.Error) {
-	// Load the secret
-	secret, err := getSecret(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Start with a default MySQL config
-	config, err := getBaseConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	// Set the fields needed for authentication. Note that we're
-	// using the `ReadOnlyHost` field of the secret, which represents the
-	// cluster's read replica host.
-	config.Addr = fmt.Sprintf("%s:%d", secret.HostReadOnly, secret.Port)
-	config.DBName = secret.Database
-	config.User = secret.Username
-	config.Passwd = secret.Password
-
-	return config, nil
+	credentials.Username = secret.Username
+	credentials.Password = secret.Password
+	return credentials, nil
 }
 
 func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
@@ -132,9 +83,25 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 	}
 
 	gormMysqlConfig := gormmysql.Config{
-		// Insert MySql-specific GORM settings here
+		// Insert MySQL-specific GORM settings here
 		DefaultStringSize: 256,
 		// ... many other settings available
+	}
+
+	// This is a configuration for MySQL connections. It relates
+	// to settings used by the MySQL driver, not GORM.
+	// We start with the default config
+	mysqlConfig := mysql.NewConfig()
+
+	// And customize some fields
+	mysqlConfig.Loc = time.UTC
+	mysqlConfig.Collation = "utf8mb4_0900_ai_ci"
+	// ... other settings available
+
+	// Load the database secret
+	secret, err := getSecret(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// The maximum number of connections we can have open to the
@@ -153,9 +120,13 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 		// Set the GORM-specific MySQL settings to use for this dialector
 		GormMysqlConfig: gormMysqlConfig,
 
-		// Set the function that dynamically gets the config for connecting
-		// to the write host.
-		GetMysqlConfigCallback: createMysqlConfigWrite,
+		// Set a function that returns the MySQL config to use. This
+		// allows changing parameters for each new connection, if desired.
+		// The host/port/user/password fields don't need to be provided
+		// because they are overwritten by the password authentication system.
+		GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
+			return mysqlConfig, nil
+		},
 	}
 
 	// The maximum number of connections we can have open to the
@@ -173,19 +144,39 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 		// Set the GORM-specific MySQL settings to use for this dialector
 		GormMysqlConfig: gormMysqlConfig,
 
-		// Set the function that dynamically gets the config for connecting
-		// to the read host.
-		GetMysqlConfigCallback: createMysqlConfigRead,
+		// Set a function that returns the MySQL config to use. This
+		// allows changing parameters for each new connection, if desired.
+		// The host/port/user/password fields don't need to be provided
+		// because they are overwritten by the password authentication system.
+		GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
+			return mysqlConfig, nil
+		},
 	}
 
-	return gormauth.GetMysqlGorm(ctx, gormauth.GetMysqlGormInput{
-		GormOptions: []gorm.Option{
-			gormConfig,
+	return gormauth.GetMysqlGorm(ctx, gormauthmysql.GetMysqlGormInputWithAuth[gormauthmodels.MysqlSecretPasswordWithReadOnly]{
+		GetMysqlGormInput: gormauthmysql.GetMysqlGormInput{
+			GormOptions: []gorm.Option{
+				gormConfig,
+			},
+			WriteDialectorInput: writeDialectorInput,
+			ReadDialectorInput:  readDialectorInput,
+			// In this example, our database host is AWS, so we use the
+			// helper function that gets the AWS TLS config for us
+			GetTlsConfigFunc: gormaws.GetTlsConfig,
 		},
-		WriteDialectorInput: writeDialectorInput,
-		ReadDialectorInput:  readDialectorInput,
-		// In this example, our database host is AWS, so we use the
-		// helper function that gets the AWS TLS config for us
-		GetTlsConfigFunc: gormaws.GetTlsConfig,
+		AuthSettings: gormauthmodels.MysqlSecretPasswordWithReadOnly{
+			MysqlSecretPassword: gormauthmodels.MysqlSecretPassword{
+				MysqlSecret: gormauthmodels.MysqlSecret{
+					Host:   secret.Host,
+					Port:   secret.Port,
+					Schema: secret.Database,
+				},
+				GetCredentials: getCredentials,
+			},
+			HostReadOnly: secret.HostReadOnly,
+			// If your credentials are different for the read-only endpoint,
+			// use a different function here.
+			GetCredentialsReadOnly: getCredentials,
+		},
 	})
 }

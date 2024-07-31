@@ -1,4 +1,4 @@
-package gormaws
+package gormauthaws
 
 import (
 	"context"

@@ -1,26 +1,17 @@
-package gormaws
+package gormauthaws
 
 import (
 	"context"
 
 	"github.com/Invicton-Labs/go-stackerr"
-	gormauth "github.com/Invicton-Labs/gorm-auth"
+	gormauthawsiam "github.com/Invicton-Labs/gorm-auth/aws/iam-auth"
+	gormauthmysql "github.com/Invicton-Labs/gorm-auth/mysql"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
 type authTypes interface {
-	RdsIamAuth | RdsIamAuthWithReadOnly
-}
-
-// GetRdsIamMysqlGormInput is an input that contains everything
-// needed for a standard connection to an AWS RDS cluster with
-// IAM authentication enabled.
-type GetRdsIamMysqlGormInput[AuthType authTypes] struct {
-	gormauth.GetMysqlGormInput
-	MysqlConfig  *mysql.Config
-	AuthSettings AuthType
+	gormauthawsiam.RdsIamAuth | gormauthawsiam.RdsIamAuthWithReadOnly
 }
 
 // GetRdsIamMysqlGorm gets a GORM DB using IAM authentication for
@@ -28,16 +19,16 @@ type GetRdsIamMysqlGormInput[AuthType authTypes] struct {
 // RDS by loading the root certificates from AWS via HTTP.
 func GetRdsIamMysqlGorm[AuthType authTypes](
 	ctx context.Context,
-	input GetRdsIamMysqlGormInput[AuthType],
+	input gormauthmysql.GetMysqlGormInputWithAuth[AuthType],
 ) (*gorm.DB, stackerr.Error) {
 
-	var writeAuthSettings RdsIamAuth
-	var readAuthSettings RdsIamAuthWithReadOnly
+	var writeAuthSettings gormauthawsiam.RdsIamAuth
+	var readAuthSettings gormauthawsiam.RdsIamAuthWithReadOnly
 	hasReader := false
-	if authSettings, ok := any(input.AuthSettings).(RdsIamAuth); ok {
+	if authSettings, ok := any(input.AuthSettings).(gormauthawsiam.RdsIamAuth); ok {
 		writeAuthSettings = authSettings
 	} else {
-		readAuthSettings = any(input.AuthSettings).(RdsIamAuthWithReadOnly)
+		readAuthSettings = any(input.AuthSettings).(gormauthawsiam.RdsIamAuthWithReadOnly)
 		writeAuthSettings = readAuthSettings.RdsIamAuth
 		hasReader = true
 	}
@@ -64,11 +55,14 @@ func GetRdsIamMysqlGorm[AuthType authTypes](
 		input.GetTlsConfigFunc = GetTlsConfig
 	}
 
-	input.WriteDialectorInput.GetMysqlConfigCallback = writeAuthSettings.GetTokenGenerator(input.MysqlConfig)
+	input.WriteDialectorInput.GetMysqlConfigCallback = writeAuthSettings.GetTokenGenerator(input.WriteDialectorInput.GetMysqlConfigCallback)
 
 	if hasReader {
-		input.ReadDialectorInput.GetMysqlConfigCallback = readAuthSettings.GetReadOnlyTokenGenerator(input.MysqlConfig)
+		input.ReadDialectorInput.GetMysqlConfigCallback = readAuthSettings.GetReadOnlyTokenGenerator(input.ReadDialectorInput.GetMysqlConfigCallback)
+	} else {
+		// If there's no read config, remove the reader config callback
+		input.ReadDialectorInput.GetMysqlConfigCallback = nil
 	}
 
-	return gormauth.GetMysqlGorm(ctx, input.GetMysqlGormInput)
+	return gormauthmysql.GetMysqlGorm(ctx, input.GetMysqlGormInput)
 }

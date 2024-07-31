@@ -6,9 +6,10 @@ import (
 	"time"
 
 	"github.com/Invicton-Labs/go-stackerr"
-	gormauth "github.com/Invicton-Labs/gorm-auth"
-	gormaws "github.com/Invicton-Labs/gorm-auth/aws"
+	gormauthaws "github.com/Invicton-Labs/gorm-auth/aws"
+	gormauthawsiam "github.com/Invicton-Labs/gorm-auth/aws/iam-auth"
 	"github.com/Invicton-Labs/gorm-auth/dialectors"
+	gormauthmysql "github.com/Invicton-Labs/gorm-auth/mysql"
 	"github.com/aws/aws-sdk-go-v2/config"
 	gormmysql "gorm.io/driver/mysql"
 
@@ -35,7 +36,7 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 
 	// Unmarshal the JSON into a struct that can be used for
 	// generating tokens.
-	var iamAuthSettings gormaws.RdsIamAuthWithReadOnly
+	var iamAuthSettings gormauthawsiam.RdsIamAuthWithReadOnly
 	if err := json.Unmarshal([]byte(AwsRdsIamAuthJson), &iamAuthSettings); err != nil {
 		return nil, stackerr.Wrap(err)
 	}
@@ -47,14 +48,18 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 	}
 	iamAuthSettings.AwsConfig = awsCfg
 
+	// These are configuration options for GORM itself,
+	// separate from any database-specific options.
 	gormConfig := &gorm.Config{
 		// Insert GORM general settings here
 		CreateBatchSize: 1000,
 		// ... many other settings available
 	}
 
+	// These are configuration options for GORM's interaction
+	// with MySQL databases.
 	gormMysqlConfig := gormmysql.Config{
-		// Insert MySql-specific GORM settings here
+		// Insert MySQL-specific GORM settings here
 		DefaultStringSize: 256,
 		// ... many other settings available
 	}
@@ -82,8 +87,13 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 		// Set the GORM-specific MySQL settings to use for this dialector
 		GormMysqlConfig: gormMysqlConfig,
 
-		// We don't need to set the GetMysqlConfigCallback value because
-		// a custom IAM auth function will be added automatically
+		// Set a function that returns the MySQL config to use. This
+		// allows changing parameters for each new connection, if desired.
+		// The host/port/user/password fields don't need to be provided
+		// because they are overwritten by the IAM authentication system.
+		GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
+			return mysqlConfig, nil
+		},
 	}
 
 	// The maximum number of connections we can have open to the
@@ -99,13 +109,18 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 		// Set the GORM-specific MySQL settings to use for this dialector
 		GormMysqlConfig: gormMysqlConfig,
 
-		// We don't need to set the GetMysqlConfigCallback value because
-		// a custom IAM auth function will be added automatically
+		// Set a function that returns the MySQL config to use. This
+		// allows changing parameters for each new connection, if desired.
+		// The host/port/user/password fields don't need to be provided
+		// because they are overwritten by the IAM authentication system.
+		GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
+			return mysqlConfig, nil
+		},
 	}
 
 	// Create an input for the creation function
-	input := gormaws.GetRdsIamMysqlGormInput[gormaws.RdsIamAuthWithReadOnly]{
-		GetMysqlGormInput: gormauth.GetMysqlGormInput{
+	input := gormauthmysql.GetMysqlGormInputWithAuth[gormauthawsiam.RdsIamAuthWithReadOnly]{
+		GetMysqlGormInput: gormauthmysql.GetMysqlGormInput{
 			GormOptions: []gorm.Option{
 				gormConfig,
 			},
@@ -115,12 +130,11 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 			// an RDS cluster. RDS clusters use AWS's root CAs for signing
 			// the TLS certificates, so use the helper function that
 			// gets a TLS config that trusts AWS's root CAs.
-			GetTlsConfigFunc: gormaws.GetTlsConfig,
+			GetTlsConfigFunc: gormauthaws.GetTlsConfig,
 		},
-		MysqlConfig:  mysqlConfig,
 		AuthSettings: iamAuthSettings,
 	}
 
 	// Get the GORM DB
-	return gormaws.GetRdsIamMysqlGorm(ctx, input)
+	return gormauthaws.GetRdsIamMysqlGorm(ctx, input)
 }
