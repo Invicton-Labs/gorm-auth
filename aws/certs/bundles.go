@@ -20,9 +20,61 @@ const (
 )
 
 var (
-	globalAwsRootCertPool     *x509.CertPool
-	globalAwsRootCertPoolLock sync.Mutex
+	globalAwsRootCertPool        *x509.CertPool
+	globalAwsRootCertPoolOnce    sync.Once
+	globalAwsRootCertPoolInitErr stackerr.Error
 )
+
+func initCertPool(httpClient *http.Client) stackerr.Error {
+	pemBytes, err := awsCertBundles.ReadFile("bundles/global.pem")
+	if err != nil {
+		return stackerr.Wrap(err)
+	}
+	rootCertPool := x509.NewCertPool()
+	if ok := rootCertPool.AppendCertsFromPEM(pemBytes); !ok {
+		return stackerr.Errorf("failed to parse global root CA file")
+	}
+
+	hasExpired := false
+
+	for len(pemBytes) > 0 {
+		var block *pem.Block
+		block, pemBytes = pem.Decode(pemBytes)
+		crt, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return stackerr.Wrap(err)
+		}
+		if time.Until(crt.NotAfter) < time.Hour {
+			hasExpired = true
+			break
+		}
+	}
+
+	if !hasExpired {
+		globalAwsRootCertPool = rootCertPool
+		return nil
+	}
+
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Get(awsRootCertBundleUrl)
+	if err != nil {
+		return stackerr.Wrap(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return stackerr.Wrap(err)
+	}
+
+	rootCertPool = x509.NewCertPool()
+	if ok := rootCertPool.AppendCertsFromPEM(body); !ok {
+		return stackerr.Wrap(err)
+	}
+	globalAwsRootCertPool = rootCertPool
+	return nil
+}
 
 // GetGlobalRootCertPool gets a CertPool for AWS's global certificate bundle.
 // It first attempts to load the certificate bundle that is included in this
@@ -31,57 +83,11 @@ var (
 // soon, it will attempt to load new certificates from AWS directly via HTTP.
 // It caches the CertPool for future use.
 func GetGlobalRootCertPool(httpClient *http.Client) (*x509.CertPool, stackerr.Error) {
-	globalAwsRootCertPoolLock.Lock()
-	defer globalAwsRootCertPoolLock.Unlock()
-	if globalAwsRootCertPool == nil {
-		pemBytes, err := awsCertBundles.ReadFile("bundles/global.pem")
-		if err != nil {
-			return nil, stackerr.Wrap(err)
-		}
-		rootCertPool := x509.NewCertPool()
-		if ok := rootCertPool.AppendCertsFromPEM(pemBytes); !ok {
-			return nil, stackerr.Errorf("failed to parse global root CA file")
-		}
-
-		hasExpired := false
-
-		for len(pemBytes) > 0 {
-			var block *pem.Block
-			block, pemBytes = pem.Decode(pemBytes)
-			crt, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				return nil, stackerr.Wrap(err)
-			}
-			if time.Until(crt.NotAfter) < time.Hour {
-				hasExpired = true
-				break
-			}
-		}
-
-		if !hasExpired {
-			globalAwsRootCertPool = rootCertPool
-			return globalAwsRootCertPool, nil
-		}
-
-		if httpClient == nil {
-			httpClient = http.DefaultClient
-		}
-		resp, err := httpClient.Get(awsRootCertBundleUrl)
-		if err != nil {
-			return nil, stackerr.Wrap(err)
-		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, stackerr.Wrap(err)
-		}
-
-		rootCertPool = x509.NewCertPool()
-		if ok := rootCertPool.AppendCertsFromPEM(body); !ok {
-			return nil, stackerr.Wrap(err)
-		}
-		globalAwsRootCertPool = rootCertPool
+	globalAwsRootCertPoolOnce.Do(func() {
+		globalAwsRootCertPoolInitErr = initCertPool(httpClient)
+	})
+	if globalAwsRootCertPoolInitErr != nil {
+		return nil, globalAwsRootCertPoolInitErr
 	}
-
 	return globalAwsRootCertPool, nil
 }

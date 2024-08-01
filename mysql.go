@@ -1,4 +1,4 @@
-package gormauthmysql
+package gormauth
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Invicton-Labs/go-stackerr"
+	"github.com/Invicton-Labs/gorm-auth/authenticators"
 	"github.com/Invicton-Labs/gorm-auth/connectors"
 	"github.com/Invicton-Labs/gorm-auth/dialectors"
 	"github.com/go-sql-driver/mysql"
@@ -15,9 +16,19 @@ import (
 	"gorm.io/plugin/dbresolver"
 )
 
+var defaultMysqlConfig mysql.Config = *(mysql.NewConfig())
+
 // A function signature for a callback function that gets the TLS configuration
 // to use for a specific host.
 type GetTlsConfigCallback func(ctx context.Context, host string) (*tls.Config, stackerr.Error)
+
+type ConnectionParameters struct {
+	DialectorInput dialectors.MysqlDialectorInput
+	// OPTIONAL: A function that gets the TLS config to use for a
+	// connection based on the given host name
+	GetTlsConfigFunc GetTlsConfigCallback
+	AuthSettings     authenticators.AuthenticationSettings
+}
 
 func wrapMysqlConfigWithTls(sourceFunc connectors.GetMysqlConfigCallback, getTlsFunc GetTlsConfigCallback) connectors.GetMysqlConfigCallback {
 	return func(ctx context.Context) (*mysql.Config, stackerr.Error) {
@@ -69,18 +80,6 @@ func wrapMysqlConfigWithTls(sourceFunc connectors.GetMysqlConfigCallback, getTls
 	}
 }
 
-type AuthenticationSettings interface {
-	GetAuthParameters(ctx context.Context) (*mysql.Config, stackerr.Error)
-}
-
-type ConnectionParameters struct {
-	DialectorInput dialectors.MysqlDialectorInput
-	// OPTIONAL: A function that gets the TLS config to use for a
-	// connection based on the given host name
-	GetTlsConfigFunc GetTlsConfigCallback
-	AuthSettings     AuthenticationSettings
-}
-
 // The input values for getting a standard MySQL GORM DB handle
 type GetMysqlGormInput struct {
 	// Input values for write connections
@@ -94,7 +93,7 @@ type GetMysqlGormInput struct {
 	ReplicaPolicy dbresolver.Policy
 }
 
-func wrapConfigCallback(callback connectors.GetMysqlConfigCallback, authSettings AuthenticationSettings, getTlsConfigFunc GetTlsConfigCallback) connectors.GetMysqlConfigCallback {
+func wrapConfigCallback(callback connectors.GetMysqlConfigCallback, authSettings authenticators.AuthenticationSettings, getTlsConfigFunc GetTlsConfigCallback) connectors.GetMysqlConfigCallback {
 	f := func(ctx context.Context) (*mysql.Config, stackerr.Error) {
 		var config *mysql.Config
 		if callback != nil {
@@ -108,17 +107,13 @@ func wrapConfigCallback(callback connectors.GetMysqlConfigCallback, authSettings
 		}
 
 		// Get the authentication parameters
-		authConfig, err := authSettings.GetAuthParameters(ctx)
+		authConfig, err := authSettings.UpdateConfigWithAuth(ctx, *config)
 		if err != nil {
 			return nil, err
 		}
-
-		config.Addr = authConfig.Addr
-		config.User = authConfig.User
-		config.Passwd = authConfig.Passwd
-		config.DBName = authConfig.DBName
-
-		// TODO: also need to set other config params that are non-default
+		if authConfig == nil {
+			return nil, stackerr.Errorf("Failed to retrieve authConfig")
+		}
 
 		return config, nil
 	}
@@ -138,12 +133,24 @@ func GetMysqlGorm(
 	readerDialectors := make([]gorm.Dialector, len(input.ReadConnectionParameters))
 	replicaDialectors := []gorm.Dialector{}
 	if input.WriteConnectionParameters != nil {
+		// If the authenticator also needs to make changes to the dialector input, make those changes
+		var err stackerr.Error
+		input.WriteConnectionParameters.DialectorInput, err = input.WriteConnectionParameters.AuthSettings.UpdateDialectorSettings(input.WriteConnectionParameters.DialectorInput)
+		if err != nil {
+			return nil, err
+		}
 		// Wrap the config callback to apply the authentication parameters and TLS config
 		input.WriteConnectionParameters.DialectorInput.GetMysqlConfigCallback = wrapConfigCallback(input.WriteConnectionParameters.DialectorInput.GetMysqlConfigCallback, input.WriteConnectionParameters.AuthSettings, input.WriteConnectionParameters.GetTlsConfigFunc)
 		writerDialector = dialectors.NewDialector(input.WriteConnectionParameters.DialectorInput)
 	}
 	if len(input.ReadConnectionParameters) > 0 {
 		for idx, _ := range input.ReadConnectionParameters {
+			// If the authenticator also needs to make changes to the dialector input, make those changes
+			var err stackerr.Error
+			input.ReadConnectionParameters[idx].DialectorInput, err = input.ReadConnectionParameters[idx].AuthSettings.UpdateDialectorSettings(input.ReadConnectionParameters[idx].DialectorInput)
+			if err != nil {
+				return nil, err
+			}
 			// Wrap the config callback to apply the authentication parameters and TLS config
 			input.ReadConnectionParameters[idx].DialectorInput.GetMysqlConfigCallback = wrapConfigCallback(input.ReadConnectionParameters[idx].DialectorInput.GetMysqlConfigCallback, input.ReadConnectionParameters[idx].AuthSettings, input.ReadConnectionParameters[idx].GetTlsConfigFunc)
 			readerDialectors[idx] = dialectors.NewDialector(input.ReadConnectionParameters[idx].DialectorInput)
@@ -184,78 +191,3 @@ func GetMysqlGorm(
 
 	return db, nil
 }
-
-// func GetMysqlGormPassword[authType passwordAuthTypes](
-// 	ctx context.Context,
-// 	input GetMysqlGormInputWithAuth[authType],
-// ) (*gorm.DB, stackerr.Error) {
-
-// 	var writeAuthSettings gormauthmodels.MysqlSecretPassword
-// 	var readAuthSettings gormauthmodels.MysqlSecretPasswordWithReadOnly
-// 	hasReader := false
-
-// 	if authSettings, ok := any(input.AuthSettings).(gormauthmodels.MysqlSecretPassword); ok {
-// 		writeAuthSettings = authSettings
-// 	} else if authSettings, ok := any(input.AuthSettings).(gormauthmodels.MysqlSecretPasswordWithReadOnly); ok {
-// 		writeAuthSettings = authSettings.MysqlSecretPassword
-// 		readAuthSettings = authSettings
-// 		hasReader = true
-// 	}
-
-// 	if input.WriteDialectorInput.GetMysqlConfigCallback != nil {
-// 		// Wrap the write dialector with a function that adds
-// 		// the appropriate connection parameters.
-// 		input.WriteDialectorInput.GetMysqlConfigCallback = func(ctx context.Context) (*mysql.Config, stackerr.Error) {
-// 			cfg, err := input.WriteDialectorInput.GetMysqlConfigCallback(ctx)
-// 			if err != nil {
-// 				return nil, err
-// 			}
-// 			creds, err := writeAuthSettings.GetCredentials(ctx)
-// 			if err != nil {
-// 				return nil, err
-// 			}
-// 			cfg.User = creds.Username
-// 			cfg.Passwd = creds.Password
-// 			cfg.Addr = fmt.Sprintf("%s:%d", writeAuthSettings.Host, writeAuthSettings.Port)
-// 			cfg.DBName = writeAuthSettings.Schema
-// 			return cfg, nil
-// 		}
-// 	}
-// 	if input.ReadDialectorInput.GetMysqlConfigCallback != nil && hasReader {
-// 		port := readAuthSettings.PortReadOnly
-// 		if port == 0 {
-// 			port = readAuthSettings.Port
-// 		}
-// 		// Wrap the read dialector with a function that adds
-// 		// the appropriate connection parameters.
-// 		input.ReadDialectorInput.GetMysqlConfigCallback = func(ctx context.Context) (*mysql.Config, stackerr.Error) {
-// 			cfg, err := input.ReadDialectorInput.GetMysqlConfigCallback(ctx)
-// 			if err != nil {
-// 				return nil, err
-// 			}
-// 			var creds gormauthmodels.DatabaseCredentials
-// 			if readAuthSettings.GetCredentialsReadOnly != nil {
-// 				creds, err = readAuthSettings.GetCredentialsReadOnly(ctx)
-// 			} else {
-// 				creds, err = readAuthSettings.GetCredentials(ctx)
-// 			}
-// 			if err != nil {
-// 				return nil, err
-// 			}
-// 			cfg.User = creds.Username
-// 			cfg.Passwd = creds.Password
-// 			cfg.Addr = fmt.Sprintf("%s:%d", readAuthSettings.HostReadOnly, port)
-// 			cfg.DBName = readAuthSettings.Schema
-// 			return cfg, nil
-// 		}
-// 	}
-
-// 	// If the input type doesn't include a read-only connection,
-// 	// set the config callback as nil so read-only connections
-// 	// are never used.
-// 	if !hasReader {
-// 		input.ReadDialectorInput.GetMysqlConfigCallback = nil
-// 	}
-
-// 	return GetMysqlGorm(ctx, input.GetMysqlGormInput)
-// }

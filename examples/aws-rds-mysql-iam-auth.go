@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/Invicton-Labs/go-stackerr"
+	gormauth "github.com/Invicton-Labs/gorm-auth"
+	"github.com/Invicton-Labs/gorm-auth/authenticators"
 	gormauthaws "github.com/Invicton-Labs/gorm-auth/aws"
-	gormauthawsiam "github.com/Invicton-Labs/gorm-auth/aws/iam-auth"
 	"github.com/Invicton-Labs/gorm-auth/dialectors"
-	gormauthmysql "github.com/Invicton-Labs/gorm-auth/mysql"
 	"github.com/aws/aws-sdk-go-v2/config"
 	gormmysql "gorm.io/driver/mysql"
+	"gorm.io/plugin/dbresolver"
 
 	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
@@ -25,7 +26,7 @@ const (
 	"host": "mycluster.cluster-123456789012.us-east-1.rds.amazonaws.com",
 	"read_only_host": "mycluster-ro.cluster-123456789012.us-east-1.rds.amazonaws.com",
 	"port": 3306,
-	"database": "myschema",
+	"schema": "myschema",
 	"region": "ca-central-1",
 	"username": "api-user"
 }
@@ -36,7 +37,7 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 
 	// Unmarshal the JSON into a struct that can be used for
 	// generating tokens.
-	var iamAuthSettings gormauthawsiam.RdsIamAuthWithReadOnly
+	var iamAuthSettings authenticators.MysqlConnectionParametersAwsIam
 	if err := json.Unmarshal([]byte(AwsRdsIamAuthJson), &iamAuthSettings); err != nil {
 		return nil, stackerr.Wrap(err)
 	}
@@ -119,22 +120,35 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 	}
 
 	// Create an input for the creation function
-	input := gormauthmysql.GetMysqlGormInputWithAuth[gormauthawsiam.RdsIamAuthWithReadOnly]{
-		GetMysqlGormInput: gormauthmysql.GetMysqlGormInput{
-			GormOptions: []gorm.Option{
-				gormConfig,
-			},
-			WriteDialectorInput: writeDialectorInput,
-			ReadDialectorInput:  readDialectorInput,
+	input := gormauth.GetMysqlGormInput{
+		GormOptions: []gorm.Option{
+			gormConfig,
+		},
+		// In this example, this doesn't do anything because there is
+		// only one read replica.
+		ReplicaPolicy: dbresolver.StrictRoundRobinPolicy(),
+		WriteConnectionParameters: &gormauth.ConnectionParameters{
+			DialectorInput: writeDialectorInput,
 			// Since we're doing IAM auth, we must be connecting to
 			// an RDS cluster. RDS clusters use AWS's root CAs for signing
 			// the TLS certificates, so use the helper function that
 			// gets a TLS config that trusts AWS's root CAs.
 			GetTlsConfigFunc: gormauthaws.GetTlsConfig,
+			AuthSettings:     &iamAuthSettings,
 		},
-		AuthSettings: iamAuthSettings,
+		ReadConnectionParameters: []*gormauth.ConnectionParameters{
+			{
+				DialectorInput: readDialectorInput,
+				// Since we're doing IAM auth, we must be connecting to
+				// an RDS cluster. RDS clusters use AWS's root CAs for signing
+				// the TLS certificates, so use the helper function that
+				// gets a TLS config that trusts AWS's root CAs.
+				GetTlsConfigFunc: gormauthaws.GetTlsConfig,
+				AuthSettings:     &iamAuthSettings,
+			},
+		},
 	}
 
 	// Get the GORM DB
-	return gormauthaws.GetRdsIamMysqlGorm(ctx, input)
+	return gormauth.GetMysqlGorm(ctx, input)
 }

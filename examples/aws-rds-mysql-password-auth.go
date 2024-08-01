@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/Invicton-Labs/go-stackerr"
+	gormauth "github.com/Invicton-Labs/gorm-auth"
 	"github.com/Invicton-Labs/gorm-auth/authenticators"
 	gormauthaws "github.com/Invicton-Labs/gorm-auth/aws"
 	"github.com/Invicton-Labs/gorm-auth/dialectors"
-	gormauthmysql "github.com/Invicton-Labs/gorm-auth/mysql"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/plugin/dbresolver"
 
@@ -63,7 +63,7 @@ func getSecret(_ context.Context) (secret MysqlSecret, err stackerr.Error) {
 	return secret, nil
 }
 
-func getCredentials(ctx context.Context) (credentials authenticators.DatabaseCredentials, err stackerr.Error) {
+func getCredentials(ctx context.Context) (credentials authenticators.PasswordCredentials, err stackerr.Error) {
 	// Load the secret
 	secret, err := getSecret(ctx)
 	if err != nil {
@@ -115,7 +115,7 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 	// The maximum number of connections we can have open to the
 	// write host.
 	writeMaxOpenConnections := 3
-	writeInput := gormauthmysql.ConnectionParameters{
+	writeInput := gormauth.ConnectionParameters{
 		DialectorInput: dialectors.MysqlDialectorInput{
 			DialectorInput: dialectors.DialectorInput{
 				// Set the function that checks if new credentials should be loaded
@@ -145,7 +145,7 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 	// The maximum number of connections we can have open to the
 	// read host.
 	readMaxOpenConnections := 3
-	readInputs := []*gormauthmysql.ConnectionParameters{
+	readInputs := []*gormauth.ConnectionParameters{
 		{
 			DialectorInput: dialectors.MysqlDialectorInput{
 				DialectorInput: dialectors.DialectorInput{
@@ -174,7 +174,7 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 		},
 	}
 
-	return gormauthmysql.GetMysqlGorm(ctx, gormauthmysql.GetMysqlGormInput{
+	return gormauth.GetMysqlGorm(ctx, gormauth.GetMysqlGormInput{
 		WriteConnectionParameters: &writeInput,
 		ReadConnectionParameters:  readInputs,
 		GormOptions: []gorm.Option{
