@@ -3,11 +3,9 @@ package awscerts
 import (
 	"crypto/x509"
 	"embed"
-	"encoding/pem"
-	"io"
+	"fmt"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/Invicton-Labs/go-stackerr"
 )
@@ -26,54 +24,64 @@ var (
 )
 
 func initCertPool(httpClient *http.Client) stackerr.Error {
-	pemBytes, err := awsCertBundles.ReadFile("bundles/global.pem")
+	entries, err := awsCertBundles.ReadDir("bundles")
 	if err != nil {
 		return stackerr.Wrap(err)
 	}
+
 	rootCertPool := x509.NewCertPool()
-	if ok := rootCertPool.AppendCertsFromPEM(pemBytes); !ok {
-		return stackerr.Errorf("failed to parse global root CA file")
-	}
-
-	hasExpired := false
-
-	for len(pemBytes) > 0 {
-		var block *pem.Block
-		block, pemBytes = pem.Decode(pemBytes)
-		crt, err := x509.ParseCertificate(block.Bytes)
+	for _, entry := range entries {
+		pemBytes, err := awsCertBundles.ReadFile(fmt.Sprintf("bundles/%s", entry.Name()))
 		if err != nil {
 			return stackerr.Wrap(err)
 		}
-		if time.Until(crt.NotAfter) < time.Hour {
-			hasExpired = true
-			break
+		if ok := rootCertPool.AppendCertsFromPEM(pemBytes); !ok {
+			return stackerr.Errorf("failed to parse PEM file %s", entry.Name())
 		}
 	}
 
-	if !hasExpired {
-		globalAwsRootCertPool = rootCertPool
-		return nil
-	}
-
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	resp, err := httpClient.Get(awsRootCertBundleUrl)
-	if err != nil {
-		return stackerr.Wrap(err)
-	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return stackerr.Wrap(err)
-	}
-
-	rootCertPool = x509.NewCertPool()
-	if ok := rootCertPool.AppendCertsFromPEM(body); !ok {
-		return stackerr.Wrap(err)
-	}
 	globalAwsRootCertPool = rootCertPool
 	return nil
+
+	// hasExpired := false
+
+	// for len(pemBytes) > 0 {
+	// 	var block *pem.Block
+	// 	block, pemBytes = pem.Decode(pemBytes)
+	// 	crt, err := x509.ParseCertificate(block.Bytes)
+	// 	if err != nil {
+	// 		return stackerr.Wrap(err)
+	// 	}
+	// 	if time.Until(crt.NotAfter) < time.Hour {
+	// 		hasExpired = true
+	// 		break
+	// 	}
+	// }
+
+	// if !hasExpired {
+	// 	globalAwsRootCertPool = rootCertPool
+	// 	return nil
+	// }
+
+	// if httpClient == nil {
+	// 	httpClient = http.DefaultClient
+	// }
+	// resp, err := httpClient.Get(awsRootCertBundleUrl)
+	// if err != nil {
+	// 	return stackerr.Wrap(err)
+	// }
+	// body, err := io.ReadAll(resp.Body)
+	// resp.Body.Close()
+	// if err != nil {
+	// 	return stackerr.Wrap(err)
+	// }
+
+	// rootCertPool = x509.NewCertPool()
+	// if ok := rootCertPool.AppendCertsFromPEM(body); !ok {
+	// 	return stackerr.Wrap(err)
+	// }
+	// globalAwsRootCertPool = rootCertPool
+	// return nil
 }
 
 // GetGlobalRootCertPool gets a CertPool for AWS's global certificate bundle.

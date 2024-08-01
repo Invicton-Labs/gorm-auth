@@ -115,31 +115,33 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 	// The maximum number of connections we can have open to the
 	// write host.
 	writeMaxOpenConnections := 3
-	writeInput := gormauth.ConnectionParameters{
-		DialectorInput: dialectors.MysqlDialectorInput{
-			DialectorInput: dialectors.DialectorInput{
-				// Set the function that checks if new credentials should be loaded
-				ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
+	writeInputs := []*gormauth.ConnectionParameters{
+		{
+			DialectorInput: dialectors.MysqlDialectorInput{
+				DialectorInput: dialectors.DialectorInput{
+					// Set the function that checks if new credentials should be loaded
+					ShouldReconfigureCallback: checkIfNewCredentialsNeeded,
 
-				// Some general GORM settings for the connection management
-				MaxOpenConns: &writeMaxOpenConnections,
-				// ...several other settings available
+					// Some general GORM settings for the connection management
+					MaxOpenConns: &writeMaxOpenConnections,
+					// ...several other settings available
+				},
+
+				// Set the GORM-specific MySQL settings to use for this dialector
+				GormMysqlConfig: gormMysqlConfig,
+
+				// Set a function that returns the MySQL config to use. This
+				// allows changing parameters for each new connection, if desired.
+				// The host/port/user/password fields don't need to be provided
+				// because they are overwritten by the password authentication system.
+				GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
+					return mysqlConfig, nil
+				},
 			},
-
-			// Set the GORM-specific MySQL settings to use for this dialector
-			GormMysqlConfig: gormMysqlConfig,
-
-			// Set a function that returns the MySQL config to use. This
-			// allows changing parameters for each new connection, if desired.
-			// The host/port/user/password fields don't need to be provided
-			// because they are overwritten by the password authentication system.
-			GetMysqlConfigCallback: func(ctx context.Context) (*mysql.Config, stackerr.Error) {
-				return mysqlConfig, nil
-			},
+			// Use the AWS TLS configuration (change if you're connecting elsewhere)
+			GetTlsConfigFunc: gormauthaws.GetTlsConfig,
+			AuthSettings:     authenticator,
 		},
-		// Use the AWS TLS configuration (change if you're connecting elsewhere)
-		GetTlsConfigFunc: gormauthaws.GetTlsConfig,
-		AuthSettings:     authenticator,
 	}
 
 	// The maximum number of connections we can have open to the
@@ -175,7 +177,7 @@ func AwsRdsMysqlPasswordAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 	}
 
 	return gormauth.GetMysqlGorm(ctx, gormauth.GetMysqlGormInput{
-		WriteConnectionParameters: &writeInput,
+		WriteConnectionParameters: writeInputs,
 		ReadConnectionParameters:  readInputs,
 		GormOptions: []gorm.Option{
 			gormConfig,

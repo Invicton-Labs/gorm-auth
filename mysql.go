@@ -83,7 +83,7 @@ func wrapMysqlConfigWithTls(sourceFunc connectors.GetMysqlConfigCallback, getTls
 // The input values for getting a standard MySQL GORM DB handle
 type GetMysqlGormInput struct {
 	// Input values for write connections
-	WriteConnectionParameters *ConnectionParameters
+	WriteConnectionParameters []*ConnectionParameters
 	// Input values for read connections
 	ReadConnectionParameters []*ConnectionParameters
 	// OPTIONAL: A set of GORM options to use for all connections
@@ -107,12 +107,9 @@ func wrapConfigCallback(callback connectors.GetMysqlConfigCallback, authSettings
 		}
 
 		// Get the authentication parameters
-		authConfig, err := authSettings.UpdateConfigWithAuth(ctx, *config)
+		config, err := authSettings.UpdateConfigWithAuth(ctx, *config)
 		if err != nil {
 			return nil, err
-		}
-		if authConfig == nil {
-			return nil, stackerr.Errorf("Failed to retrieve authConfig")
 		}
 
 		return config, nil
@@ -129,22 +126,24 @@ func GetMysqlGorm(
 	ctx context.Context,
 	input GetMysqlGormInput,
 ) (*gorm.DB, stackerr.Error) {
-	var writerDialector gorm.Dialector
-	readerDialectors := make([]gorm.Dialector, len(input.ReadConnectionParameters))
-	replicaDialectors := []gorm.Dialector{}
-	if input.WriteConnectionParameters != nil {
-		// If the authenticator also needs to make changes to the dialector input, make those changes
-		var err stackerr.Error
-		input.WriteConnectionParameters.DialectorInput, err = input.WriteConnectionParameters.AuthSettings.UpdateDialectorSettings(input.WriteConnectionParameters.DialectorInput)
-		if err != nil {
-			return nil, err
+	writerDialectors := make([]gorm.Dialector, len(input.WriteConnectionParameters))
+	if len(input.WriteConnectionParameters) > 0 {
+		for idx := range input.WriteConnectionParameters {
+			// If the authenticator also needs to make changes to the dialector input, make those changes
+			var err stackerr.Error
+			input.WriteConnectionParameters[idx].DialectorInput, err = input.WriteConnectionParameters[idx].AuthSettings.UpdateDialectorSettings(input.WriteConnectionParameters[idx].DialectorInput)
+			if err != nil {
+				return nil, err
+			}
+			// Wrap the config callback to apply the authentication parameters and TLS config
+			input.WriteConnectionParameters[idx].DialectorInput.GetMysqlConfigCallback = wrapConfigCallback(input.WriteConnectionParameters[idx].DialectorInput.GetMysqlConfigCallback, input.WriteConnectionParameters[idx].AuthSettings, input.WriteConnectionParameters[idx].GetTlsConfigFunc)
+			writerDialectors[idx] = dialectors.NewDialector(input.WriteConnectionParameters[idx].DialectorInput)
 		}
-		// Wrap the config callback to apply the authentication parameters and TLS config
-		input.WriteConnectionParameters.DialectorInput.GetMysqlConfigCallback = wrapConfigCallback(input.WriteConnectionParameters.DialectorInput.GetMysqlConfigCallback, input.WriteConnectionParameters.AuthSettings, input.WriteConnectionParameters.GetTlsConfigFunc)
-		writerDialector = dialectors.NewDialector(input.WriteConnectionParameters.DialectorInput)
 	}
+
+	readerDialectors := make([]gorm.Dialector, len(input.ReadConnectionParameters))
 	if len(input.ReadConnectionParameters) > 0 {
-		for idx, _ := range input.ReadConnectionParameters {
+		for idx := range input.ReadConnectionParameters {
 			// If the authenticator also needs to make changes to the dialector input, make those changes
 			var err stackerr.Error
 			input.ReadConnectionParameters[idx].DialectorInput, err = input.ReadConnectionParameters[idx].AuthSettings.UpdateDialectorSettings(input.ReadConnectionParameters[idx].DialectorInput)
@@ -157,36 +156,27 @@ func GetMysqlGorm(
 		}
 	}
 
-	var db *gorm.DB
-	var cerr error
-	if writerDialector != nil {
-		// If there's a writer dialector, use that as main
-		db, cerr = gorm.Open(writerDialector, input.GormOptions...)
-	} else if len(readerDialectors) > 0 {
-		// Otherwise, use the first reader as main
-		db, cerr = gorm.Open(readerDialectors[0], input.GormOptions...)
-		// And use the remaining readers as replicas
-		replicaDialectors = readerDialectors[1:]
-	} else {
-		return nil, stackerr.Errorf("At least one of a writer or reader input must be provided")
-	}
+	// Create the database without a dialector, so
+	// no connection is opened automatically. We do this
+	// because we don't want a write connection to be opened
+	// if we end up only needing a read connection, and
+	// vice-versa.
+	db, cerr := gorm.Open(nil, input.GormOptions...)
 	if cerr != nil {
 		return nil, stackerr.Wrap(cerr)
 	}
 
-	// If there are any extra read replicas, add them
-	if len(replicaDialectors) > 0 {
-		policy := input.ReplicaPolicy
-		if policy == nil {
-			policy = dbresolver.RandomPolicy{}
-		}
-		// Register the replica reader dialectors
-		if err := db.Use(dbresolver.Register(dbresolver.Config{
-			Replicas: replicaDialectors,
-			Policy:   policy,
-		})); err != nil {
-			return nil, stackerr.Wrap(err)
-		}
+	policy := input.ReplicaPolicy
+	if policy == nil {
+		policy = dbresolver.StrictRoundRobinPolicy()
+	}
+	// Register the dialectors
+	if err := db.Use(dbresolver.Register(dbresolver.Config{
+		Sources:  writerDialectors,
+		Replicas: readerDialectors,
+		Policy:   policy,
+	})); err != nil {
+		return nil, stackerr.Wrap(err)
 	}
 
 	return db, nil

@@ -32,7 +32,7 @@ type MysqlConnectionParametersAwsIam struct {
 	// parse the region from the host name.
 	Region string `json:"region"`
 	// The AWS config to use for authentication/credentials
-	AwsConfig aws.Config
+	AwsCredentials aws.CredentialsProvider
 }
 
 func (params *MysqlConnectionParametersAwsIam) UpdateDialectorSettings(dialectorInput dialectors.MysqlDialectorInput) (dialectors.MysqlDialectorInput, stackerr.Error) {
@@ -55,12 +55,12 @@ func (params *MysqlConnectionParametersAwsIam) UpdateConfigWithAuth(ctx context.
 
 	// If no credential source is provided, use the default AWS config
 	// from environment variables.
-	if params.AwsConfig.Credentials == nil && params.AwsConfig.Region == "" {
+	if params.AwsCredentials == nil {
 		defaultAwsConfig, err := awsconfig.LoadDefaultConfig(ctx)
 		if err != nil {
 			return nil, stackerr.Wrap(err)
 		}
-		params.AwsConfig = defaultAwsConfig
+		params.AwsCredentials = defaultAwsConfig.Credentials
 	}
 
 	addr := fmt.Sprintf("%s:%d", params.Host, params.Port)
@@ -69,7 +69,7 @@ func (params *MysqlConnectionParametersAwsIam) UpdateConfigWithAuth(ctx context.
 		addr,
 		params.Region,
 		params.Username,
-		params.AwsConfig.Credentials,
+		params.AwsCredentials,
 	)
 	if err != nil {
 		return nil, stackerr.Wrap(err)

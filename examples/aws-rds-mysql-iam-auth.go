@@ -47,7 +47,7 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 	if err != nil {
 		return nil, stackerr.Wrap(err)
 	}
-	iamAuthSettings.AwsConfig = awsCfg
+	iamAuthSettings.AwsCredentials = awsCfg.Credentials
 
 	// These are configuration options for GORM itself,
 	// separate from any database-specific options.
@@ -127,14 +127,16 @@ func AwsRdsMysqlIamAuth(ctx context.Context) (*gorm.DB, stackerr.Error) {
 		// In this example, this doesn't do anything because there is
 		// only one read replica.
 		ReplicaPolicy: dbresolver.StrictRoundRobinPolicy(),
-		WriteConnectionParameters: &gormauth.ConnectionParameters{
-			DialectorInput: writeDialectorInput,
-			// Since we're doing IAM auth, we must be connecting to
-			// an RDS cluster. RDS clusters use AWS's root CAs for signing
-			// the TLS certificates, so use the helper function that
-			// gets a TLS config that trusts AWS's root CAs.
-			GetTlsConfigFunc: gormauthaws.GetTlsConfig,
-			AuthSettings:     &iamAuthSettings,
+		WriteConnectionParameters: []*gormauth.ConnectionParameters{
+			{
+				DialectorInput: writeDialectorInput,
+				// Since we're doing IAM auth, we must be connecting to
+				// an RDS cluster. RDS clusters use AWS's root CAs for signing
+				// the TLS certificates, so use the helper function that
+				// gets a TLS config that trusts AWS's root CAs.
+				GetTlsConfigFunc: gormauthaws.GetTlsConfig,
+				AuthSettings:     &iamAuthSettings,
+			},
 		},
 		ReadConnectionParameters: []*gormauth.ConnectionParameters{
 			{
