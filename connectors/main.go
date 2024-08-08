@@ -8,15 +8,15 @@ import (
 	"github.com/Invicton-Labs/go-stackerr"
 	"github.com/go-sql-driver/mysql"
 
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // A function signature for a callback function that determines whether the connection
 // configuration should be reconfigured for the next connection.
 type ShouldReconfigureCallback func(ctx context.Context) (reconfigure bool, err stackerr.Error)
 
-// A function signature for a callback function that gets the Postgres connection configuraiton.
+// A function signature for a callback function that gets the Postgres connection configuration.
 type GetPostgresConfigCallback func(ctx context.Context) (config pgx.ConnConfig, opts []stdlib.OptionOpenDB, err stackerr.Error)
 
 // A function signature for a callback function that gets the MySQL connection configuraiton.
