@@ -156,27 +156,43 @@ func GetMysqlGorm(
 		}
 	}
 
+	// We need to select a primary dialector for things
+	var mainConnection gorm.Dialector
+	if len(writerDialectors) > 0 {
+		mainConnection = writerDialectors[0]
+		// TODO: it's unclear if the default should still be included in the Sources list (https://github.com/go-gorm/gorm/issues/7145)
+		//writerDialectors = writerDialectors[1:]
+	} else if len(readerDialectors) > 0 {
+		mainConnection = readerDialectors[0]
+		// TODO: it's unclear if the default should still be included in the Replica list (https://github.com/go-gorm/gorm/issues/7145)
+		//readerDialectors = readerDialectors[1:]
+	}
+
 	// Create the database without a dialector, so
 	// no connection is opened automatically. We do this
 	// because we don't want a write connection to be opened
 	// if we end up only needing a read connection, and
 	// vice-versa.
-	db, cerr := gorm.Open(nil, input.GormOptions...)
+	db, cerr := gorm.Open(mainConnection, input.GormOptions...)
 	if cerr != nil {
 		return nil, stackerr.Wrap(cerr)
 	}
 
-	policy := input.ReplicaPolicy
-	if policy == nil {
-		policy = dbresolver.StrictRoundRobinPolicy()
-	}
-	// Register the dialectors
-	if err := db.Use(dbresolver.Register(dbresolver.Config{
-		Sources:  writerDialectors,
-		Replicas: readerDialectors,
-		Policy:   policy,
-	})); err != nil {
-		return nil, stackerr.Wrap(err)
+	// If there are multiple dialectors, we need a DBResolver.
+	// If not, we can just use the default dialector for everything.
+	if len(writerDialectors)+len(readerDialectors) > 1 {
+		policy := input.ReplicaPolicy
+		if policy == nil {
+			policy = dbresolver.StrictRoundRobinPolicy()
+		}
+		// Register the dialectors
+		if err := db.Use(dbresolver.Register(dbresolver.Config{
+			Sources:  writerDialectors,
+			Replicas: readerDialectors,
+			Policy:   policy,
+		})); err != nil {
+			return nil, stackerr.Wrap(err)
+		}
 	}
 
 	return db, nil

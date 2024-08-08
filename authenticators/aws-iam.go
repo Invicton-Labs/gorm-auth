@@ -14,7 +14,8 @@ import (
 )
 
 var (
-	rdsHostRegionRegexp *regexp.Regexp = regexp.MustCompile(`^[^.]+\.[^.]+\.([a-z]+-[a-z]+-[0-9]+)\.rds\.amazonaws\.com$`)
+	rdsHostRegionRegexp       *regexp.Regexp = regexp.MustCompile(`^[^.]+\.[^.]+\.([a-z]+-[a-z]+-[0-9]+)\.rds\.amazonaws\.com$`)
+	rdsHostRegionRegexpReader *regexp.Regexp = regexp.MustCompile(`^reader\.endpoint\.proxy-[^.]+\.([a-z]+-[a-z]+-[0-9]+)\.rds\.amazonaws\.com$`)
 )
 
 type MysqlConnectionParametersAwsIam struct {
@@ -45,6 +46,9 @@ func (params *MysqlConnectionParametersAwsIam) UpdateConfigWithAuth(ctx context.
 	if params.Region == "" {
 		// If no region was specified, try to extract it from the hostname
 		regionMatches := rdsHostRegionRegexp.FindStringSubmatch(params.Host)
+		if len(regionMatches) == 0 {
+			regionMatches = rdsHostRegionRegexpReader.FindStringSubmatch(params.Host)
+		}
 		if len(regionMatches) > 1 {
 			params.Region = regionMatches[1]
 		}
